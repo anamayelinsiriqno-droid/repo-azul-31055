@@ -1,1 +1,34 @@
+name: Build IPA
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip source if needed
+        run: |
+          if ls *.zip 1> /dev/null 2>&1; then
+            unzip -o *.zip
+            rm *.zip
+          fi
+          find . -name "*.xcodeproj" | head -n 20
+
+      - name: Build IPA
+        run: |
+          PROJECT=$(find . -name "*.xcodeproj" | head -n 1)
+          echo "Compilando: $PROJECT"
+          xcodebuild -project "$PROJECT" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" 
+          mkdir -p Payload
+          APP=$(find build -name "*.app" | head -n 1)
+          cp -r "$APP" Payload/
+          zip -r app-unsigned.ipa Payload/
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: IPA-Compilada
+          path: "*.ipa"
