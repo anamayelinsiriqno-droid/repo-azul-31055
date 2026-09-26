@@ -8,13 +8,23 @@ jobs:
     runs-on: macos-15
 
     steps:
+
+      # ==========================================
+      # 1. Descargar repositorio
+      # ==========================================
       - name: Checkout
         uses: actions/checkout@v4
 
+
+      # ==========================================
+      # 2. Seleccionar Xcode automáticamente
+      # ==========================================
       - name: Select Xcode
         shell: bash
         run: |
           set -e
+
+          echo "Buscando Xcode..."
 
           XCODE=$(find /Applications \
             -maxdepth 1 \
@@ -24,23 +34,34 @@ jobs:
             | tail -1)
 
           if [ -z "$XCODE" ]; then
-            echo "ERROR: No se encontró Xcode"
+            echo "ERROR: No se encontró Xcode."
             ls -la /Applications | grep -i Xcode || true
             exit 1
           fi
 
-          echo "Usando: $XCODE"
+          echo "Xcode encontrado:"
+          echo "$XCODE"
 
           sudo xcode-select -s "$XCODE/Contents/Developer"
 
+          echo ""
+          echo "Developer:"
           xcode-select -p
+
+          echo ""
+          echo "Versión:"
           xcodebuild -version
 
-      - name: Find Xcode project
-        id: project
+
+      # ==========================================
+      # 3. Buscar y descomprimir la source
+      # ==========================================
+      - name: Prepare source
         shell: bash
         run: |
           set -e
+
+          echo "Buscando proyecto Xcode..."
 
           PROJECT=$(find . \
             -type d \
@@ -48,15 +69,100 @@ jobs:
             -print \
             | head -1)
 
-          if [ -z "$PROJECT" ]; then
-            echo "ERROR: No se encontró ningún .xcodeproj"
+          if [ -n "$PROJECT" ]; then
+            echo "El proyecto ya está extraído:"
+            echo "$PROJECT"
+            exit 0
+          fi
+
+          echo "No hay .xcodeproj todavía."
+          echo "Buscando ZIP de la source..."
+
+          ZIP=$(find . \
+            -maxdepth 3 \
+            -type f \
+            -iname "*.zip" \
+            ! -path "./.git/*" \
+            -print \
+            | head -1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No se encontró ningún ZIP con la source."
+            echo ""
+            echo "Archivos encontrados:"
             find . -maxdepth 4 -type f | sort | head -200
             exit 1
           fi
 
-          echo "Proyecto encontrado: $PROJECT"
+          echo "ZIP encontrado:"
+          echo "$ZIP"
+
+          mkdir -p source
+
+          echo "Descomprimiendo source..."
+
+          unzip -q "$ZIP" -d source
+
+          echo ""
+          echo "Contenido de source:"
+          find source -maxdepth 4 -type f | sort | head -200
+
+
+      # ==========================================
+      # 4. Encontrar Xcode project
+      # ==========================================
+      - name: Find Xcode project
+        id: project
+        shell: bash
+        run: |
+          set -e
+
+          echo "Buscando .xcodeproj..."
+
+          PROJECT=$(find . \
+            -type d \
+            -name "*.xcodeproj" \
+            ! -path "./.git/*" \
+            -print \
+            | head -1)
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: No se encontró ningún .xcodeproj."
+            echo ""
+            echo "Contenido del repositorio:"
+            find . -maxdepth 5 -type f | sort | head -300
+            exit 1
+          fi
+
+          echo "======================================"
+          echo "PROYECTO ENCONTRADO"
+          echo "$PROJECT"
+          echo "======================================"
+
           echo "PROJECT=$PROJECT" >> "$GITHUB_OUTPUT"
 
+
+      # ==========================================
+      # 5. Mostrar proyectos y Schemes
+      # ==========================================
+      - name: Show project information
+        run: |
+          PROJECT="${{ steps.project.outputs.PROJECT }}"
+
+          echo "Proyecto:"
+          echo "$PROJECT"
+
+          echo ""
+          echo "Información Xcode:"
+          
+          xcodebuild \
+            -project "$PROJECT" \
+            -list
+
+
+      # ==========================================
+      # 6. Encontrar Scheme
+      # ==========================================
       - name: Find Scheme
         id: scheme
         shell: bash
@@ -65,39 +171,45 @@ jobs:
 
           PROJECT="${{ steps.project.outputs.PROJECT }}"
 
-          echo "Proyecto:"
-          echo "$PROJECT"
+          echo "Buscando Schemes..."
 
           xcodebuild \
             -project "$PROJECT" \
             -list
 
-          SCHEME=$(
-            xcodebuild \
-              -project "$PROJECT" \
-              -list |
+          SCHEME=$(xcodebuild \
+            -project "$PROJECT" \
+            -list |
             awk '
               /Schemes:/ {
                 found=1
                 next
               }
+
               found && NF {
                 print $1
                 exit
               }
-            '
-          )
+            ')
 
           SCHEME=$(echo "$SCHEME" | xargs)
 
           if [ -z "$SCHEME" ]; then
-            echo "ERROR: No se encontró Scheme"
+            echo "ERROR: No se encontró ningún Scheme."
             exit 1
           fi
 
-          echo "Scheme: $SCHEME"
+          echo "======================================"
+          echo "SCHEME ENCONTRADO"
+          echo "$SCHEME"
+          echo "======================================"
+
           echo "SCHEME=$SCHEME" >> "$GITHUB_OUTPUT"
 
+
+      # ==========================================
+      # 7. Compilar SIN FIRMA
+      # ==========================================
       - name: Build unsigned
         shell: bash
         run: |
@@ -106,57 +218,131 @@ jobs:
           PROJECT="${{ steps.project.outputs.PROJECT }}"
           SCHEME="${{ steps.scheme.outputs.SCHEME }}"
 
+          echo "Proyecto:"
+          echo "$PROJECT"
+
+          echo ""
+          echo "Scheme:"
+          echo "$SCHEME"
+
           rm -rf build
+          mkdir -p build
+
+          echo ""
+          echo "======================================"
+          echo "COMPILANDO SIN FIRMA"
+          echo "======================================"
 
           xcodebuild \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
             -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "$PWD/build/SLOWTH.xcarchive" \
+            -sdk iphoneos \
+            -derivedDataPath "$PWD/build/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            clean archive
+            build
 
-      - name: Extract app
+
+      # ==========================================
+      # 8. Encontrar la .app
+      # ==========================================
+      - name: Find built app
+        id: app
         shell: bash
         run: |
           set -e
 
-          mkdir -p build/unsigned
+          echo "Buscando .app..."
 
           APP=$(find \
-            build/SLOWTH.xcarchive/Products/Applications \
-            -maxdepth 1 \
+            build/DerivedData/Build/Products \
             -type d \
             -name "*.app" \
             -print \
             | head -1)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: No se encontró .app"
+            echo "ERROR: No se encontró la .app."
+            echo ""
+            echo "Contenido de Build:"
+            find build -maxdepth 8 -print | head -300
             exit 1
           fi
 
-          cp -R "$APP" build/unsigned/
+          echo "======================================"
+          echo "APP ENCONTRADA"
+          echo "$APP"
+          echo "======================================"
 
-      - name: Create IPA
+          echo "APP=$APP" >> "$GITHUB_OUTPUT"
+
+
+      # ==========================================
+      # 9. Crear Payload
+      # ==========================================
+      - name: Prepare IPA
         shell: bash
         run: |
           set -e
 
+          APP="${{ steps.app.outputs.APP }}"
+
+          rm -rf build/Payload
+
           mkdir -p build/Payload
-          cp -R build/unsigned/*.app build/Payload/
+
+          cp -R "$APP" build/Payload/
+
+          echo "Payload preparado:"
+          ls -la build/Payload
+
+
+      # ==========================================
+      # 10. Crear IPA SIN FIRMA
+      # ==========================================
+      - name: Create unsigned IPA
+        shell: bash
+        run: |
+          set -e
 
           cd build
 
-          zip -r ../SLOWTH-unsigned.ipa Payload
+          rm -f ../SLOWTH-unsigned.ipa
 
+          zip -qry \
+            ../SLOWTH-unsigned.ipa \
+            Payload
+
+          cd ..
+
+          echo ""
+          echo "======================================"
+          echo "IPA CREADA"
+          echo "======================================"
+
+          ls -lh SLOWTH-unsigned.ipa
+
+
+      # ==========================================
+      # 11. Subir IPA
+      # ==========================================
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: SLOWTH-unsigned-IPA
           path: SLOWTH-unsigned.ipa
+          if-no-files-found: error
+
+
+      # ==========================================
+      # 12. Subir también la APP
+      # ==========================================
+      - name: Upload APP backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: SLOWTH-unsigned-APP
+          path: build/Payload/*.app
           if-no-files-found: error
