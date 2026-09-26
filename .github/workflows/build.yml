@@ -5,13 +5,16 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build IPA
+      - name: Build
         run: |
+          ls -R
           PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          echo "Using: $PROJ"
-          xcodebuild -project "$PROJ" -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=$(pwd)/build -destination 'generic/platform=iOS' build
+          echo "PROYECTO ENCONTRADO: $PROJ"
+          xcodebuild -project "$PROJ" -configuration Release CODE_SIGNING_ALLOWED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO -destination 'generic/platform=iOS' SYMROOT=$(pwd)/build build
           mkdir -p Payload
-          find build -name "*.app" -type d | head -n 1 | xargs -I {} cp -R {} Payload/
+          APP=$(find build -name "*.app" | head -n 1)
+          echo "APP: $APP"
+          cp -R "$APP" Payload/
           zip -r app-unsigned.ipa Payload
       - uses: actions/upload-artifact@v4
         with:
