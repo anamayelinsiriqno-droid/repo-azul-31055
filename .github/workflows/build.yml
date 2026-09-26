@@ -1,43 +1,24 @@
 name: Build IPA
-
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Unzip
         run: |
-          if ls *.zip 1> /dev/null 2>&1; then
-            for z in *.zip; do unzip -o "$z"; rm "$z"; done
-          fi
-          ls -R | head -n 100
-
+          if ls *.zip 1>/dev/null 2>&1; then for z in *.zip; do unzip -o "$z"; rm "$z"; done; fi
+          ls -R | grep xcodeproj
       - name: Build
         run: |
-          set -x
-          PROJ=$(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
-          WS=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
-          echo "Proyecto: $PROJ"
-          echo "Workspace: $WS"
-          
-          if [ -n "$WS" ]; then
-            SCHEME=$(xcodebuild -list -workspace "$WS" 2>/dev/null | grep -A 100 "Schemes:" | sed -n '2p' | xargs)
-            echo "Scheme: $SCHEME"
-            xcodebuild -workspace "$WS" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES
-          else
-            xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES
-          fi
-          
+          PROJ="./3105-2.0/ThreeOneOSFive.xcodeproj"
+          xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=build/Build
           mkdir -p Payload
           APP=$(find build -name "*.app" | head -n 1)
-          echo "App: $APP"
+          echo "APP: $APP"
           cp -R "$APP" Payload/
           zip -r app-unsigned.ipa Payload
-
       - uses: actions/upload-artifact@v4
         with:
           name: IPA
