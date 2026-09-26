@@ -9,26 +9,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unzip source if needed
+      - name: Unzip
         run: |
           if ls *.zip 1> /dev/null 2>&1; then
-            unzip -o *.zip
-            rm *.zip
+            for z in *.zip; do unzip -o "$z"; rm "$z"; done
           fi
-          find . -name "*.xcodeproj" | head -n 20
+          ls -R | head -n 100
 
-      - name: Build IPA
+      - name: Build
         run: |
-          PROJECT=$(find . -name "*.xcodeproj" | head -n 1)
-          echo "Compilando: $PROJECT"
-          xcodebuild -project "$PROJECT" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" 
+          set -x
+          PROJ=$(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
+          WS=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
+          echo "Proyecto: $PROJ"
+          echo "Workspace: $WS"
+          
+          if [ -n "$WS" ]; then
+            SCHEME=$(xcodebuild -list -workspace "$WS" 2>/dev/null | grep -A 100 "Schemes:" | sed -n '2p' | xargs)
+            echo "Scheme: $SCHEME"
+            xcodebuild -workspace "$WS" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES
+          else
+            xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES
+          fi
+          
           mkdir -p Payload
           APP=$(find build -name "*.app" | head -n 1)
-          cp -r "$APP" Payload/
-          zip -r app-unsigned.ipa Payload/
+          echo "App: $APP"
+          cp -R "$APP" Payload/
+          zip -r app-unsigned.ipa Payload
 
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: IPA-Compilada
+          name: IPA
           path: "*.ipa"
