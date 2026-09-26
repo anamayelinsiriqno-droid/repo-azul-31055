@@ -1,21 +1,89 @@
-name: build
-on: [push]
+name: Build SLOWTH
+
+on:
+  workflow_dispatch:
+
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Build
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
         run: |
-          ls -la
-          PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          echo "PROYECTO: $PROJ"
-          xcodebuild -project "$PROJ" -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=$(pwd)/build -destination 'generic/platform=iOS' build
-          APP=$(find build -name "*.app" | head -n 1)
-          mkdir -p Payload
-          cp -R "$APP" Payload/
-          zip -r app-unsigned.ipa Payload
-      - uses: actions/upload-artifact@v4
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Find Xcode project
+        id: project
+        run: |
+          PROJECT=$(find . -maxdepth 3 -name "*.xcodeproj" -print -quit)
+
+          if [ -z "$PROJECT" ]; then
+            echo "No se encontró ningún .xcodeproj"
+            exit 1
+          fi
+
+          echo "PROJECT=$PROJECT" >> "$GITHUB_OUTPUT"
+
+      - name: Find Scheme
+        id: scheme
+        run: |
+          PROJECT="${{ steps.project.outputs.PROJECT }}"
+
+          SCHEME=$(xcodebuild \
+            -project "$PROJECT" \
+            -list |
+            awk '/Schemes:/,/^$/' |
+            sed '1d' |
+            sed '/^[[:space:]]*$/d' |
+            head -1 |
+            xargs)
+
+          if [ -z "$SCHEME" ]; then
+            echo "No se encontró ningún Scheme"
+            xcodebuild -project "$PROJECT" -list
+            exit 1
+          fi
+
+          echo "SCHEME=$SCHEME" >> "$GITHUB_OUTPUT"
+
+      - name: Build unsigned
+        run: |
+          PROJECT="${{ steps.project.outputs.PROJECT }}"
+          SCHEME="${{ steps.scheme.outputs.SCHEME }}"
+
+          rm -rf build
+
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$PWD/build/SLOWTH.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            clean archive
+
+      - name: Export unsigned app
+        run: |
+          mkdir -p build/unsigned
+
+          cp -R \
+            build/SLOWTH.xcarchive/Products/Applications/*.app \
+            build/unsigned/
+
+      - name: Create ZIP
+        run: |
+          cd build/unsigned
+          zip -r ../../SLOWTH-unsigned.zip *.app
+
+      - name: Upload unsigned build
+        uses: actions/upload-artifact@v4
         with:
-          name: IPA
-          path: app-unsigned.ipa
+          name: SLOWTH-unsigned
+          path: SLOWTH-unsigned.zip
