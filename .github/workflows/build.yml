@@ -9,27 +9,15 @@ jobs:
       - name: Descomprimir y buscar
         run: |
           unzip -o Slowthv7-3105-2.0-source.zip
-          ls -la
           echo "--- PROYECTOS ---"
           find. -name "*.xcodeproj"
 
       - name: Compilar IPA
         run: |
           PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          echo "Proyecto encontrado: $PROJ"
-
-          xcodebuild -project "$PROJ" \
-            -scheme ThreeOneOSFive \
-            -sdk iphoneos \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            SYMROOT=$(pwd)/build build
-
+          echo "Proyecto: $PROJ"
+          xcodebuild -project "$PROJ" -scheme ThreeOneOSFive -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" SYMROOT=$(pwd)/build build
           APP=$(find./build -name "*.app" | head -n 1)
-          echo "App: $APP"
           mkdir -p Payload
           cp -R "$APP" Payload/
           zip -r azul.ipa Payload
