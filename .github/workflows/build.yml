@@ -1,15 +1,29 @@
-name: Build
-  run: |
-    PROJ="./3105-2.0/ThreeOneOSFive.xcodeproj"
-    # fix SettingsView - windows deprecated
-    find . -name "SettingsView.swift" -exec sed -i '' 's/UIApplication.shared.windows.first/UIApplication.shared.connectedScenes.compactMap { \$0 as? UIWindowScene }.flatMap { \$0.windows }.first/g' {} \; || true
-    find . -name "*.swift" -exec sed -i '' 's/UIApplication.shared.windows/UIApplication.shared.connectedScenes.compactMap { \$0 as? UIWindowScene }.flatMap { \$0.windows }/g' {} \; || true
-    
-    # fix OnboardingStep que vimos antes
-    find . -name "OnboardingView.swift" -exec sed -i '' 's/\.language/.welcome/g' {} \; || true
-
-    xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=3105-2.0/build/Build
-    APP=$(find . -name "*.app" | head -n 1)
-    mkdir -p Payload
-    cp -R "$APP" Payload/
-    zip -r app-unsigned.ipa Payload
+name: Build IPA
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unzip
+        run: |
+          if ls *.zip 1>/dev/null 2>&1; then for z in *.zip; do unzip -o "$z"; rm "$z"; done; fi
+      - name: Fix ChatGPT bugs
+        run: |
+          echo "Arreglando OnboardingView y SettingsView..."
+          find . -name "OnboardingView.swift" -exec sed -i '' 's/\.language/.welcome/g' {} \; || true
+          find . -name "SettingsView.swift" -exec sed -i '' 's/UIApplication.shared.windows.first/UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }.first/g' {} \; || true
+          find . -name "*.swift" -exec sed -i '' 's/\.windows/.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }/g' {} \; || true
+      - name: Build
+        run: |
+          PROJ="./3105-2.0/ThreeOneOSFive.xcodeproj"
+          xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=3105-2.0/build/Build
+          APP=$(find 3105-2.0/build -name "*.app" | head -n 1)
+          echo "APP: $APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -r azul.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IPA
+          path: "*.ipa"
