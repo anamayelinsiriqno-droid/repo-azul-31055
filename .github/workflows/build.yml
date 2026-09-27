@@ -3,7 +3,8 @@ name: Build 3105
 on:
   workflow_dispatch:
   push:
-    branches: ["**"]
+    branches:
+      - "**"
   pull_request:
 
 permissions:
@@ -16,96 +17,218 @@ jobs:
 
     env:
       PROJECT: 3105-2.0/ThreeOneOSFive.xcodeproj
-      SCHEME: "3105"
+      TARGET: "3105"
       CONFIGURATION: Release
       SDK: iphoneos
       ARCHIVE_PATH: ${{ github.workspace }}/build/3105.xcarchive
       DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
 
     steps:
-      - name: Checkout
+
+      # --------------------------------------------------
+      # 1. Descargar el repositorio
+      # --------------------------------------------------
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 26.6
+      # --------------------------------------------------
+      # 2. Seleccionar Xcode
+      # --------------------------------------------------
+      - name: Select Xcode
+        shell: bash
         run: |
           set -euo pipefail
+
           sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+
+          echo "Xcode:"
           xcodebuild -version
+
+          echo "Developer directory:"
           xcode-select -p
 
+      # --------------------------------------------------
+      # 3. Verificar que el proyecto existe
+      # --------------------------------------------------
       - name: Verify project
-  shell: bash
-  run: |
-    set -uo pipefail
-
-    echo "PROJECT = $PROJECT"
-    echo "Contenido del proyecto:"
-    ls -la "$PROJECT"
-    echo
-    echo "Ejecutando xcodebuild -list..."
-    
-    xcodebuild \
-      -project "$PROJECT" \
-      -list \
-      2>&1 | tee verify-project.log
-
-    STATUS=${PIPESTATUS[0]}
-
-    echo
-    echo "xcodebuild exit code: $STATUS"
-
-    exit "$STATUS"
-
-      - name: Clean
+        shell: bash
         run: |
-          set -euo pipefail
-          rm -rf build
+          set -uo pipefail
+
+          echo "========================================"
+          echo "PROJECT:"
+          echo "$PROJECT"
+          echo "========================================"
+
+          if [[ ! -d "$PROJECT" ]]; then
+            echo "::error::No se encontró el proyecto:"
+            echo "$PROJECT"
+            echo
+            echo "Proyectos encontrados:"
+            find . -type d -name "*.xcodeproj" -print
+            exit 1
+          fi
+
+          if [[ ! -f "$PROJECT/project.pbxproj" ]]; then
+            echo "::error::El project.pbxproj no existe."
+            ls -la "$PROJECT"
+            exit 1
+          fi
+
+          echo
+          echo "Proyecto encontrado correctamente:"
+          ls -la "$PROJECT"
+
+          echo
+          echo "========================================"
+          echo "EJECUTANDO XCODEBUILD -LIST"
+          echo "========================================"
+
           xcodebuild \
             -project "$PROJECT" \
-            -scheme "$SCHEME" \
+            -list \
+            2>&1 | tee verify-project.log
+
+          STATUS=${PIPESTATUS[0]}
+
+          echo
+          echo "========================================"
+          echo "xcodebuild exit code: $STATUS"
+          echo "========================================"
+
+          if [[ "$STATUS" -ne 0 ]]; then
+            echo "::error::xcodebuild -list falló."
+            echo
+            echo "Contenido de verify-project.log:"
+            cat verify-project.log
+            exit "$STATUS"
+          fi
+
+      # --------------------------------------------------
+      # 4. Mostrar información de targets
+      # --------------------------------------------------
+      - name: Show build settings
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -project "$PROJECT" \
+            -target "$TARGET" \
+            -configuration "$CONFIGURATION" \
+            -sdk "$SDK" \
+            -showBuildSettings
+
+      # --------------------------------------------------
+      # 5. Limpiar
+      # --------------------------------------------------
+      - name: Clean
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf build
+
+          xcodebuild \
+            -project "$PROJECT" \
+            -target "$TARGET" \
             -configuration "$CONFIGURATION" \
             -sdk "$SDK" \
             clean
 
-      - name: Archive unsigned
+      # --------------------------------------------------
+      # 6. Compilar / Archive
+      # --------------------------------------------------
+      - name: Archive
         shell: bash
         run: |
           set -o pipefail
+
           mkdir -p build
 
           xcodebuild \
             -project "$PROJECT" \
-            -scheme "$SCHEME" \
+            -target "$TARGET" \
             -configuration "$CONFIGURATION" \
             -sdk "$SDK" \
-            -destination 'generic/platform=iOS' \
+            -destination "generic/platform=iOS" \
             -archivePath "$ARCHIVE_PATH" \
             -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            archive 2>&1 | tee build/build.log
+            archive \
+            2>&1 | tee build/build.log
 
-      - name: Locate app
+      # --------------------------------------------------
+      # 7. Buscar la aplicación compilada
+      # --------------------------------------------------
+      - name: Find archived app
+        shell: bash
         run: |
           set -euo pipefail
-          find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name '*.app' -print
-          test -d "$ARCHIVE_PATH/Products/Applications/3105.app"
 
+          echo "Buscando .app..."
+
+          APP_PATH="$(
+            find "$ARCHIVE_PATH/Products/Applications" \
+              -maxdepth 1 \
+              -type d \
+              -name "*.app" \
+              -print \
+              -quit
+          )"
+
+          if [[ -z "$APP_PATH" ]]; then
+            echo "::error::No se encontró ninguna aplicación .app."
+
+            echo
+            echo "Contenido del archive:"
+            find "$ARCHIVE_PATH" -maxdepth 6 -print || true
+
+            exit 1
+          fi
+
+          echo "Aplicación encontrada:"
+          echo "$APP_PATH"
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # 8. Crear IPA unsigned
+      # --------------------------------------------------
       - name: Create unsigned IPA
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf build/Payload build/3105-unsigned.ipa
+          rm -rf build/Payload
+          rm -f build/3105-unsigned.ipa
+
           mkdir -p build/Payload
-          cp -R "$ARCHIVE_PATH/Products/Applications/3105.app" build/Payload/3105.app
+
+          cp -R "$APP_PATH" build/Payload/
 
           cd build
-          /usr/bin/zip -qry 3105-unsigned.ipa Payload
+
+          /usr/bin/zip \
+            -qry \
+            3105-unsigned.ipa \
+            Payload
+
+          echo
+          echo "========================================"
+          echo "IPA CREADA"
+          echo "========================================"
+
           ls -lh 3105-unsigned.ipa
 
-      - name: Upload unsigned IPA
+          /usr/bin/file 3105-unsigned.ipa
+
+      # --------------------------------------------------
+      # 9. Subir IPA
+      # --------------------------------------------------
+      - name: Upload IPA
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -114,13 +237,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # --------------------------------------------------
+      # 10. Subir logs para diagnosticar errores
+      # --------------------------------------------------
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: 3105-build-diagnostics
           path: |
+            verify-project.log
             build/build.log
             build/3105.xcarchive
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
