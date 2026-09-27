@@ -1,26 +1,122 @@
-name: build
-on: [push]
+name: Build 3105
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: macos-latest
+    name: Build unsigned IPA
+    # Xcode 26.6 is available on the current macOS 26 ARM64 image.
+    runs-on: macos-26
+
+    env:
+      PROJECT: ThreeOneOSFive.xcodeproj
+      SCHEME: "3105"
+      CONFIGURATION: Release
+      SDK: iphoneos
+      ARCHIVE_PATH: ${{ github.workspace }}/build/3105.xcarchive
+      DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Descomprimir
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.6
+        shell: bash
         run: |
-          ZIP=$(ls *.zip | head -n 1)
-          unzip -o "$ZIP"
-      - name: Compilar IPA
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Show project information
+        shell: bash
         run: |
-          PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          echo "Proyecto: $PROJ"
-          find. -name "project.pbxproj" -exec sed -i '' 's/16.0/17.0/g' {} \; 2>/dev/null || find. -name "project.pbxproj" -exec sed -i 's/16.0/17.0/g' {} \;
-          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=$(pwd)/build build
-          mkdir -p Payload
-          APP=$(find build -name "*.app" | head -n 1)
-          cp -R "$APP" Payload/
-          zip -r azul.ipa Payload
-      - name: Subir IPA
+          set -euo pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -list
+
+      - name: Clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -sdk "$SDK" \
+            clean
+
+      - name: Archive (unsigned)
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p build
+
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -sdk "$SDK" \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive 2>&1 | tee build/build.log
+
+      - name: Create unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/3105.app"
+
+          if [[ ! -d "$APP_PATH" ]]; then
+            echo "::error::3105.app was not found at $APP_PATH"
+            find "$ARCHIVE_PATH/Products" -maxdepth 4 -print || true
+            exit 1
+          fi
+
+          rm -rf build/Payload build/3105-unsigned.ipa
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/3105.app
+
+          # An IPA is a ZIP container. This produces an UNSIGNED IPA.
+          # It is intended to be signed later with the user's own certificate/profile.
+          (
+            cd build
+            /usr/bin/zip -qry 3105-unsigned.ipa Payload
+          )
+
+          ls -lh build/3105-unsigned.ipa
+          file build/3105-unsigned.ipa
+
+      - name: Upload IPA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: IPA-AZUL-3105
-          path: azul.ipa
+          name: 3105-unsigned-ipa
+          path: build/3105-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload archive and build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3105-build-diagnostics
+          path: |
+            build/build.log
+            build/3105.xcarchive
+          if-no-files-found: warn
+          retention-days: 7
