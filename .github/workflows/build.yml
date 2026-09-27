@@ -6,32 +6,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
+      - name: Build IPA
         run: |
-          # Busca donde esta realmente
-          find. -name "*.xcodeproj"
-          PROJ="repo-azul-31055/3105-2.0/ThreeOneOSFive.xcodeproj"
-          # Si tienes la carpeta doble, usa esta:
-          if [! -d "$PROJ" ]; then
-            PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          fi
-          echo "USANDO PROYECTO: $PROJ"
+          xcodebuild -version
+          echo "Archivos:"
+          ls -R | grep -i xcodeproj
 
-          xcodebuild -project "$PROJ" \
-            -target 3105 \
-            -sdk iphoneos \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
-            SYMROOT=$(pwd)/build build
+          # Ruta directa - es la que tiene tu repo
+          PROJ="3105-2.0/ThreeOneOSFive.xcodeproj"
 
-          APP=$(find. -name "*.app" -type d | head -n 1)
-          echo "APP: $APP"
+          xcodebuild -project "$PROJ" -target 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" IPHONEOS_DEPLOYMENT_TARGET=15.0 SYMROOT=$(pwd)/build build
+
+          APP_PATH="build/Build/Products/Release-iphoneos/3105.app"
+          ls -lh build/Build/Products/Release-iphoneos/
+
           mkdir -p Payload
-          cp -R "$APP" Payload/
+          cp -R "$APP_PATH" Payload/
           zip -r azul.ipa Payload
 
       - uses: actions/upload-artifact@v4
