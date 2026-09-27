@@ -10,53 +10,53 @@ jobs:
         run: |
           unzip -o Slowthv7-3105-2.0-source.zip
           APP_FILE=$(find 3105-2.0 -name "App.swift" | head -n 1)
-          echo "Archivo a parchear: $APP_FILE"
+          echo "Parcheando: $APP_FILE"
 
           python3 << 'PY'
-          import pathlib, re
-          app_file = pathlib.Path(list(pathlib.Path("3105-2.0").rglob("App.swift"))[0])
-          code = app_file.read_text()
+          import pathlib, re, glob
+          app_path = pathlib.Path(glob.glob("3105-2.0/**/App.swift", recursive=True)[0])
+          code = app_path.read_text()
 
           # FIX 1: OnboardingStore
           code = code.replace("OnboardingStore.shouldShow()", "false")
           code = code.replace("OnboardingStore.markCompleted()", 'UserDefaults.standard.set(true, forKey: "onboarding.completed")')
           code = re.sub(r'.*OnboardingStore.*\n', '', code)
 
-          # FIX 2: phase in (el que te daba error)
-          code = code.replace(".onChange(of: scenePhase) { phase in", ".onChange(of: scenePhase) {")
-          code = code.replace("guard phase ==.active", "guard scenePhase ==.active")
-          code = code.replace("guard phase ==.active", "guard scenePhase ==.active")
-          code = code.replace("phase ==.active", "scenePhase ==.active")
-          code = code.replace("phase ==.active", "scenePhase ==.active")
-          # por si quedó un 'phase' suelto
-          code = re.sub(r'\bphase\b', 'scenePhase', code)
+          # FIX 2: onChange iOS 16 compatible - REEMPLAZO TOTAL DEL BLOQUE
+          # Busca el onChange y lo reemplaza por version vieja compatible
+          code = re.sub(
+              r'\.onChange\(of:\s*scenePhase\)\s*\{[^}]*\}',
+              '.onChange(of: scenePhase) { newPhase in guard newPhase ==.active else { return } }',
+              code,
+              flags=re.DOTALL
+          )
+          # Si quedó el simple.onChange(of: scenePhase) {
+          code = code.replace(".onChange(of: scenePhase) {", ".onChange(of: scenePhase) { newPhase in")
+          code = code.replace("scenePhase ==.active", "newPhase ==.active")
+          code = code.replace("scenePhase ==.active", "newPhase ==.active")
 
-          # FIX 3: Si queda.onChange viejo con 2 parametros
-          code = re.sub(r'\.onChange\(of: scenePhase\)\s*\{\s*scenePhase in', '.onChange(of: scenePhase) {', code)
+          # Asegurar que no quede "phase" suelto
+          if "phase ==" in code and "scenePhase" not in code.split("phase ==")[0][-50:]:
+              code = code.replace("phase ==", "newPhase ==")
 
-          app_file.write_text(code)
-          print("Parche aplicado OK")
-          print(code[1500:3000])
+          app_path.write_text(code)
+          print("Parcheado OK - Linea 85-95:")
+          print("\n".join(code.splitlines()[80:100]))
           PY
 
       - name: Compilar IPA
         run: |
           PROJ=$(ls -d 3105-2.0/*.xcodeproj | head -n 1)
-          SCHEME=$(basename "$PROJ".xcodeproj)
-          # Intenta detectar el scheme real, si no usa 3105
-          if xcodebuild -list -project "$PROJ" | grep -q "3105"; then
-            SCHEME="3105"
-          fi
-          echo "Proyecto: $PROJ Scheme: $SCHEME"
-
-          xcodebuild -project "$PROJ" -scheme "$SCHEME" -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=$(pwd)/build build 2>&1 | tee build.log
+          echo "Proyecto: $PROJ"
+          # Forzamos iOS 17 para que no falle el onChange si queda algo
+          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" IPHONEOS_DEPLOYMENT_TARGET=17.0 SYMROOT=$(pwd)/build build 2>&1 | tee build.log
 
           echo "---- RESUMEN ERRORES ----"
-          grep -i "error:" build.log | tail -n 100 || echo "Sin errores de compilacion"
+          grep -i "error:" build.log | tail -n 20 || echo "COMPILACION OK"
 
           mkdir -p Payload
-          APP_PATH=$(find build/Release-iphoneos -name "*.app" | head -n 1)
-          echo "APP encontrada: $APP_PATH"
+          APP_PATH=$(find build/Release-iphoneos -name "*.app" -type d | head -n 1)
+          echo "APP: $APP_PATH"
           cp -R "$APP_PATH" Payload/
           zip -r azul.ipa Payload
           ls -lh azul.ipa
