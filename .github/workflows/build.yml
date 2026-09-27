@@ -1,41 +1,59 @@
 name: Build IPA
 on: workflow_dispatch
+
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Unzip y buscar proyecto
         run: |
-          echo "--- Que hay aqui ---"
-          ls -R | head -n 100
-          if ls *.zip 1>/dev/null 2>&1; then for z in *.zip; do unzip -o "$z"; rm "$z"; done; fi
-          echo "--- Después de unzip ---"
-          find . -name "*.xcodeproj" -o -name "*.xcworkspace" | head -n 20
-          
-          # Guarda la ruta real
-          PROJ=$(find . -name "*.xcodeproj" | head -n 1)
+          echo "--- Archivos ---"
+          ls -la
+          if ls *.zip 1>/dev/null 2>&1; then
+            for z in *.zip; do
+              echo "Descomprimiendo $z"
+              unzip -o "$z"
+              rm "$z"
+            done
+          fi
+          echo "--- Buscando .xcodeproj ---"
+          find . -maxdepth 4 -name "*.xcodeproj" | head -n 20
+          PROJ=$(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
+          if [ -z "$PROJ" ]; then
+            echo "NO SE ENCONTRO xcodeproj!"
+            exit 1
+          fi
           echo "PROJ=$PROJ" >> $GITHUB_ENV
           echo "Proyecto encontrado: $PROJ"
 
       - name: Fix bugs de ChatGPT
         run: |
+          echo "Parchando OnboardingView y SettingsView..."
           find . -name "OnboardingView.swift" -exec sed -i '' 's/\.language/.welcome/g' {} \; || true
           find . -name "*.swift" -exec sed -i '' 's/UIApplication.shared.windows.first/UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }.first/g' {} \; || true
+          find . -name "*.swift" -exec sed -i '' 's/UIApplication.shared.windows/UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }/g' {} \; || true
 
-      - name: Build
+      - name: Build IPA
         run: |
-          echo "Compilando $PROJ"
-          xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES
-          APP=$(find . -name "*.app" -path "*/Build/*" | head -n 1)
+          set -o pipefail
+          xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=build/Build 2>&1 | tee build.log
+          echo " "
+          echo "======== ERRORES SI HAY ========"
+          grep -E "error:" build.log | head -n 30 || echo "Sin errores, vamos bien"
+
+      - name: Empaquetar IPA
+        run: |
+          APP=$(find build -name "*.app" | head -n 1)
           if [ -z "$APP" ]; then APP=$(find . -name "*.app" | head -n 1); fi
           echo "APP: $APP"
           mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -r azul.ipa Payload
+          zip -r azul-unsigned.ipa Payload
+          ls -lh *.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: IPA
+          name: IPA-azul
           path: "*.ipa"
