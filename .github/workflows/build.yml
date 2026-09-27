@@ -12,176 +12,200 @@ permissions:
 
 jobs:
   build:
-    name: Build 3105
+    name: Compile 3105 IPA
     runs-on: macos-26
 
     env:
       TARGET: "3105"
       CONFIGURATION: "Release"
       SDK: "iphoneos"
-      ARCHIVE_PATH: ${{ github.workspace }}/build/3105.xcarchive
-      DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
 
     steps:
 
-      # ==============================================
-      # 1. Descargar el repositorio
-      # ==============================================
-      - name: Checkout source
+      # ============================================================
+      # 1. DESCARGAR EL REPOSITORIO
+      # ============================================================
+
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ==============================================
-      # 2. Mostrar exactamente lo que GitHub descargó
-      # ==============================================
-      - name: Debug repository
+      # ============================================================
+      # 2. MOSTRAR EXACTAMENTE LO QUE HAY EN EL REPOSITORIO
+      # ============================================================
+
+      - name: Inspect repository
         shell: bash
         run: |
           set -euo pipefail
 
           echo "=========================================="
-          echo "DIRECTORIO ACTUAL"
+          echo "REPOSITORY"
           echo "=========================================="
+
           pwd
-
           echo
-          echo "=========================================="
-          echo "GITHUB WORKSPACE"
-          echo "=========================================="
-          echo "$GITHUB_WORKSPACE"
-
-          echo
-          echo "=========================================="
-          echo "CONTENIDO DE LA RAÍZ"
-          echo "=========================================="
-          ls -la "$GITHUB_WORKSPACE"
-
-          echo
-          echo "=========================================="
-          echo "TODOS LOS .XCODEPROJ"
-          echo "=========================================="
 
           find "$GITHUB_WORKSPACE" \
+            -maxdepth 4 \
+            -print \
+            | sort
+
+          echo
+          echo "ZIP FILES:"
+          find "$GITHUB_WORKSPACE" \
+            -type f \
+            -iname "*.zip" \
+            -print
+
+      # ============================================================
+      # 3. ENCONTRAR Y EXTRAER LA SOURCE
+      # ============================================================
+
+      - name: Extract source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_DIR="$GITHUB_WORKSPACE/source"
+
+          rm -rf "$SOURCE_DIR"
+          mkdir -p "$SOURCE_DIR"
+
+          ZIP_FILE="$(
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 3 \
+              -type f \
+              -iname "*.zip" \
+              -print \
+              | head -n 1
+          )"
+
+          if [[ -z "$ZIP_FILE" ]]; then
+            echo "::error::No se encontró ningún ZIP con la source de 3105."
+            exit 1
+          fi
+
+          echo "ZIP encontrado:"
+          echo "$ZIP_FILE"
+          echo
+
+          echo "Extrayendo..."
+
+          /usr/bin/unzip \
+            -q \
+            "$ZIP_FILE" \
+            -d "$SOURCE_DIR"
+
+          echo
+          echo "Source extraída."
+          echo
+
+          echo "Buscando proyectos Xcode:"
+
+          find "$SOURCE_DIR" \
             -type d \
             -name "*.xcodeproj" \
             -print
 
-          echo
-          echo "=========================================="
-          echo "ARCHIVOS DEL REPOSITORIO"
-          echo "=========================================="
+      # ============================================================
+      # 4. SELECCIONAR XCODE 26.6
+      # ============================================================
 
-          find "$GITHUB_WORKSPACE" \
-            -maxdepth 5 \
-            -type f \
-            -print | sort | head -500
-
-      # ==============================================
-      # 3. Seleccionar Xcode
-      # ==============================================
-      - name: Select Xcode
+      - name: Select Xcode 26.6
         shell: bash
         run: |
           set -euo pipefail
 
-          sudo xcode-select \
-            -s /Applications/Xcode_26.6.app/Contents/Developer
+          XCODE_PATH="/Applications/Xcode_26.6.app/Contents/Developer"
+
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo "::error::Xcode 26.6 no está instalado en este runner."
+            echo
+            echo "Xcode disponibles:"
+            ls -1 /Applications \
+              | grep -i "^Xcode" \
+              || true
+            exit 1
+          fi
+
+          sudo xcode-select -s "$XCODE_PATH"
 
           echo "=========================================="
-          echo "XCODE VERSION"
+          echo "XCODE"
           echo "=========================================="
 
+          xcode-select -p
           xcodebuild -version
 
-          echo
-          echo "DEVELOPER DIRECTORY:"
-          xcode-select -p
+      # ============================================================
+      # 5. ENCONTRAR EL XCODEPROJ
+      # ============================================================
 
-      # ==============================================
-      # 4. Encontrar automáticamente el proyecto
-      # ==============================================
-      - name: Find Xcode project
+      - name: Locate Xcode project
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Buscando proyectos Xcode..."
+          SOURCE_DIR="$GITHUB_WORKSPACE/source"
 
           PROJECT_PATH="$(
-            find "$GITHUB_WORKSPACE" \
+            find "$SOURCE_DIR" \
               -type d \
               -name "*.xcodeproj" \
               -print \
-              -quit
+              | head -n 1
           )"
 
           if [[ -z "$PROJECT_PATH" ]]; then
-
-            echo "::error::No se encontró ningún .xcodeproj."
-
-            echo
-            echo "Proyectos disponibles:"
-            find "$GITHUB_WORKSPACE" \
-              -type d \
-              -name "*.xcodeproj" \
-              -print || true
+            echo "::error::No se encontró ningún .xcodeproj después de extraer la source."
 
             echo
-            echo "Contenido del repositorio:"
-            find "$GITHUB_WORKSPACE" \
-              -maxdepth 5 \
-              -print | head -500
+            echo "Estructura de source:"
+            find "$SOURCE_DIR" \
+              -maxdepth 8 \
+              -print \
+              | sort
 
             exit 1
           fi
 
-          echo
           echo "=========================================="
-          echo "PROYECTO ENCONTRADO"
+          echo "XCODE PROJECT"
           echo "=========================================="
 
           echo "$PROJECT_PATH"
 
-          PROJECT_RELATIVE="${PROJECT_PATH#$GITHUB_WORKSPACE/}"
-
-          echo
-          echo "Ruta relativa:"
-          echo "$PROJECT_RELATIVE"
-
-          echo "PROJECT=$PROJECT_RELATIVE" >> "$GITHUB_ENV"
-
           if [[ ! -f "$PROJECT_PATH/project.pbxproj" ]]; then
-            echo "::error::No se encontró project.pbxproj."
-
-            ls -la "$PROJECT_PATH"
-
+            echo "::error::El proyecto no contiene project.pbxproj."
             exit 1
           fi
 
           echo
-          echo "project.pbxproj encontrado correctamente."
+          echo "project.pbxproj encontrado."
 
-      # ==============================================
-      # 5. Inspeccionar proyecto
-      # ==============================================
-      - name: Verify project
+          echo "PROJECT_PATH=$PROJECT_PATH" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 6. VERIFICAR EL PROYECTO
+      # ============================================================
+
+      - name: Verify Xcode project
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
 
           echo "=========================================="
-          echo "PROYECTO"
+          echo "XCODE PROJECT CHECK"
           echo "=========================================="
 
-          echo "$PROJECT"
+          echo "Proyecto:"
+          echo "$PROJECT_PATH"
 
           echo
-          echo "=========================================="
-          echo "CONTENIDO"
-          echo "=========================================="
-
-          ls -la "$PROJECT"
+          echo "Contenido:"
+          ls -la "$PROJECT_PATH"
 
           echo
           echo "=========================================="
@@ -189,72 +213,100 @@ jobs:
           echo "=========================================="
 
           xcodebuild \
-            -project "$PROJECT" \
-            -list \
-            2>&1 | tee verify-project.log
+            -project "$PROJECT_PATH" \
+            -list
 
-          STATUS=${PIPESTATUS[0]}
+      # ============================================================
+      # 7. VERIFICAR QUE EL TARGET 3105 EXISTA
+      # ============================================================
 
-          echo
+      - name: Verify 3105 target
+        shell: bash
+        run: |
+          set -euo pipefail
+
           echo "=========================================="
-          echo "EXIT CODE: $STATUS"
+          echo "VERIFY TARGET"
           echo "=========================================="
 
-          if [[ "$STATUS" -ne 0 ]]; then
-            echo "::error::xcodebuild -list falló."
+          TARGET_LIST="$(
+            xcodebuild \
+              -project "$PROJECT_PATH" \
+              -list
+          )"
 
+          echo "$TARGET_LIST"
+
+          if ! echo "$TARGET_LIST" | grep -Eq '(^|[[:space:]])3105([[:space:]]|$)'; then
             echo
-            echo "LOG COMPLETO:"
-            cat verify-project.log
-
-            exit "$STATUS"
+            echo "::error::El target 3105 no aparece en xcodebuild -list."
+            exit 1
           fi
 
-      # ==============================================
-      # 6. Mostrar configuración del target
-      # ==============================================
-      - name: Show target settings
+          echo
+          echo "Target 3105 encontrado correctamente."
+
+      # ============================================================
+      # 8. MOSTRAR BUILD SETTINGS
+      # ============================================================
+
+      - name: Inspect build settings
         shell: bash
         run: |
           set -euo pipefail
 
           xcodebuild \
-            -project "$PROJECT" \
+            -project "$PROJECT_PATH" \
             -target "$TARGET" \
             -configuration "$CONFIGURATION" \
             -sdk "$SDK" \
             -showBuildSettings \
-            2>&1 | tee build-settings.log
+            | tee build-settings.log
 
-      # ==============================================
-      # 7. Limpiar proyecto
-      # ==============================================
-      - name: Clean
+      # ============================================================
+      # 9. LIMPIAR
+      # ============================================================
+
+      - name: Clean build
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf build
+          rm -rf "$GITHUB_WORKSPACE/build"
+
+          mkdir -p "$GITHUB_WORKSPACE/build"
 
           xcodebuild \
-            -project "$PROJECT" \
+            -project "$PROJECT_PATH" \
             -target "$TARGET" \
             -configuration "$CONFIGURATION" \
             -sdk "$SDK" \
             clean
 
-      # ==============================================
-      # 8. Crear Archive
-      # ==============================================
-      - name: Archive
+      # ============================================================
+      # 10. ARCHIVE
+      #
+      # IMPORTANTE:
+      # Se desactiva la firma para poder compilar desde GitHub
+      # sin certificados/provisioning profiles privados.
+      # ============================================================
+
+      - name: Archive application
         shell: bash
         run: |
           set -o pipefail
 
-          mkdir -p build
+          ARCHIVE_PATH="$GITHUB_WORKSPACE/build/3105.xcarchive"
+          DERIVED_DATA="$GITHUB_WORKSPACE/build/DerivedData"
+
+          mkdir -p "$GITHUB_WORKSPACE/build"
+
+          echo "=========================================="
+          echo "BUILD / ARCHIVE"
+          echo "=========================================="
 
           xcodebuild \
-            -project "$PROJECT" \
+            -project "$PROJECT_PATH" \
             -target "$TARGET" \
             -configuration "$CONFIGURATION" \
             -sdk "$SDK" \
@@ -265,17 +317,47 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             archive \
-            2>&1 | tee build/build.log
+            2>&1 | tee "$GITHUB_WORKSPACE/build/build.log"
 
-      # ==============================================
-      # 9. Encontrar .app
-      # ==============================================
-      - name: Find application
+      # ============================================================
+      # 11. COMPROBAR QUE EL ARCHIVE EXISTE
+      # ============================================================
+
+      - name: Verify archive
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Buscando aplicación compilada..."
+          ARCHIVE_PATH="$GITHUB_WORKSPACE/build/3105.xcarchive"
+
+          echo "=========================================="
+          echo "ARCHIVE"
+          echo "=========================================="
+
+          if [[ ! -d "$ARCHIVE_PATH" ]]; then
+            echo "::error::El XCARCHIVE no fue generado."
+            exit 1
+          fi
+
+          ls -lah "$ARCHIVE_PATH"
+
+          echo
+          echo "ArchiveInfo:"
+          find "$ARCHIVE_PATH" \
+            -maxdepth 3 \
+            -print \
+            | sort
+
+      # ============================================================
+      # 12. ENCONTRAR EL APP
+      # ============================================================
+
+      - name: Locate application
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARCHIVE_PATH="$GITHUB_WORKSPACE/build/3105.xcarchive"
 
           APP_PATH="$(
             find "$ARCHIVE_PATH/Products/Applications" \
@@ -283,63 +365,101 @@ jobs:
               -type d \
               -name "*.app" \
               -print \
-              -quit
+              | head -n 1
           )"
 
           if [[ -z "$APP_PATH" ]]; then
-
-            echo "::error::No se encontró ninguna aplicación .app."
+            echo "::error::No se encontró 3105.app dentro del archive."
 
             echo
             echo "Contenido del archive:"
-
             find "$ARCHIVE_PATH" \
-              -maxdepth 6 \
-              -print || true
+              -maxdepth 8 \
+              -print \
+              | sort
 
             exit 1
           fi
 
-          echo
-          echo "Aplicación encontrada:"
+          echo "=========================================="
+          echo "APP"
+          echo "=========================================="
+
           echo "$APP_PATH"
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
-      # ==============================================
-      # 10. Crear IPA
-      # ==============================================
-      - name: Create unsigned IPA
+      # ============================================================
+      # 13. COMPROBAR INFO DEL APP
+      # ============================================================
+
+      - name: Verify application
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf build/Payload
-          rm -f build/3105-unsigned.ipa
+          echo "=========================================="
+          echo "APPLICATION"
+          echo "=========================================="
 
-          mkdir -p build/Payload
+          ls -lah "$APP_PATH"
 
-          cp -R "$APP_PATH" build/Payload/
+          echo
+          echo "Info.plist:"
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
+            "$APP_PATH/Info.plist"
 
-          cd build
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleShortVersionString" \
+            "$APP_PATH/Info.plist" \
+            || true
+
+      # ============================================================
+      # 14. CREAR IPA
+      # ============================================================
+
+      - name: Create IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD_DIR="$GITHUB_WORKSPACE/build"
+          IPA_PATH="$BUILD_DIR/3105-unsigned.ipa"
+
+          rm -rf "$BUILD_DIR/Payload"
+          rm -f "$IPA_PATH"
+
+          mkdir -p "$BUILD_DIR/Payload"
+
+          cp -R \
+            "$APP_PATH" \
+            "$BUILD_DIR/Payload/3105.app"
+
+          cd "$BUILD_DIR"
 
           /usr/bin/zip \
             -qry \
-            3105-unsigned.ipa \
+            "$IPA_PATH" \
             Payload
 
           echo
           echo "=========================================="
-          echo "IPA CREADA"
+          echo "IPA"
           echo "=========================================="
 
-          ls -lh 3105-unsigned.ipa
+          ls -lh "$IPA_PATH"
 
-          file 3105-unsigned.ipa
+          /usr/bin/file "$IPA_PATH"
 
-      # ==============================================
-      # 11. Subir IPA
-      # ==============================================
+          echo
+          echo "Contenido IPA:"
+          /usr/bin/unzip -l "$IPA_PATH"
+
+      # ============================================================
+      # 15. SUBIR IPA
+      # ============================================================
+
       - name: Upload IPA
         if: success()
         uses: actions/upload-artifact@v4
@@ -347,20 +467,32 @@ jobs:
           name: 3105-unsigned-ipa
           path: build/3105-unsigned.ipa
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
-      # ==============================================
-      # 12. Subir logs
-      # ==============================================
-      - name: Upload diagnostics
+      # ============================================================
+      # 16. SUBIR ARCHIVE
+      # ============================================================
+
+      - name: Upload XCArchive
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3105-xcarchive
+          path: build/3105.xcarchive
+          if-no-files-found: error
+          retention-days: 7
+
+      # ============================================================
+      # 17. SUBIR LOGS SIEMPRE
+      # ============================================================
+
+      - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: 3105-build-diagnostics
           path: |
-            verify-project.log
-            build-settings.log
             build/build.log
-            build/3105.xcarchive
+            build-settings.log
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
