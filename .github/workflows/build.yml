@@ -7,18 +7,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Descomprimir y Parchear TODO a iOS 17
         run: |
-          ls -lh
           ZIP=$(ls *.zip | head -n 1)
           unzip -o "$ZIP"
-          find. -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \; 2>/dev/null || find. -name "project.pbxproj" -exec sed -i 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \;
-          python3 << 'PY'
-          import pathlib, re, glob
-          p = pathlib.Path(glob.glob("**/App.swift", recursive=True)[0])
-          c = p.read_text()
-          c = c.replace("OnboardingStore.shouldShow()", "false")
-          p.write_text(c)
-          print("Parche OK")
-          PY
+          find. -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0/IPHONEOS_DEPLOYMENT_TARGET = 17.0/g' {} \; 2>/dev/null || find. -name "project.pbxproj" -exec sed -i 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0/IPHONEOS_DEPLOYMENT_TARGET = 17.0/g' {} \;
 
       - name: Compilar IPA
         run: |
