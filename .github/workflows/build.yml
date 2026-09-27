@@ -5,15 +5,24 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Descomprimir y Parchear TODO a iOS 17
         run: |
-          unzip -o Slowthv7-3105-2.0-source.zip
-          find 3105-2.0 -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \; 2>/dev/null || find 3105-2.0 -name "project.pbxproj" -exec sed -i -E 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \;
+          ls -lh
+          ZIP=$(ls *.zip | head -n 1)
+          echo "ZIP: $ZIP"
+          unzip -o "$ZIP"
 
-          APP_FILE=$(find 3105-2.0 -name "App.swift" | head -n 1)
+          # Ahora busca en TODOS lados, no importa el nombre de la carpeta
+          find. -name "project.pbxproj" -print
+          find. -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \; 2>/dev/null || find. -name "project.pbxproj" -exec sed -i 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \;
+          find. -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \; 2>/dev/null || find. -name "project.pbxproj" -exec sed -i -E 's/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \;
+
           python3 << 'PY'
           import pathlib, re, glob
-          p = pathlib.Path(glob.glob("3105-2.0/**/App.swift", recursive=True)[0])
+          files = glob.glob("**/App.swift", recursive=True)
+          print(f"App.swift encontrado: {files}")
+          p = pathlib.Path(files[0])
           c = p.read_text()
           c = c.replace("OnboardingStore.shouldShow()", "false")
           c = c.replace("OnboardingStore.markCompleted()", 'UserDefaults.standard.set(true, forKey: "onboarding.completed")')
@@ -22,14 +31,20 @@ jobs:
           c = c.replace("scenePhase ==.active", "newPhase ==.active")
           c = c.replace("phase ==.active", "newPhase ==.active")
           p.write_text(c)
+          print("Parche OK")
           PY
+
       - name: Compilar IPA
         run: |
-          PROJ=$(ls -d 3105-2.0/*.xcodeproj | head -n 1)
+          PROJ=$(find. -name "*.xcodeproj" | head -n 1)
+          echo "Proyecto: $PROJ"
           xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" IPHONEOS_DEPLOYMENT_TARGET=17.0 SYMROOT=$(pwd)/build build
           mkdir -p Payload
-          cp -R $(find build/Release-iphoneos -name "*.app" | head -n 1) Payload/
+          APP=$(find build/Release-iphoneos -name "*.app" | head -n 1)
+          echo "APP: $APP"
+          cp -R "$APP" Payload/
           zip -r azul.ipa Payload
+
       - name: Subir IPA
         uses: actions/upload-artifact@v4
         with:
