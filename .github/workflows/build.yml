@@ -11,18 +11,20 @@ jobs:
           ZIP=$(ls *.zip | head -n 1)
           unzip -o "$ZIP"
           ls -lh
-          find. -name "*.xcodeproj"
+          ls -d *.xcodeproj */*.xcodeproj 2>/dev/null
 
       - name: Build
         run: |
-          PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          echo "Proyecto encontrado: $PROJ"
-          # Parche a iOS 17 para que compile en el runner nuevo
-          find. -name "project.pbxproj" -exec sed -i '' 's/16.0/17.0/g' {} \; 2>/dev/null || find. -name "project.pbxproj" -exec sed -i 's/16.0/17.0/g' {} \;
+          PROJ=$(ls -d *.xcodeproj */*.xcodeproj 2>/dev/null | head -n 1)
+          echo "Proyecto: $PROJ"
+
+          # Parche a iOS 17
+          sed -i '' 's/16.0/17.0/g' "$PROJ/project.pbxproj" 2>/dev/null || sed -i 's/16.0/17.0/g' "$PROJ/project.pbxproj"
+
           xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=$(pwd)/build build
+
           mkdir -p Payload
-          APP=$(find build -name "*.app" | head -n 1)
-          echo "APP: $APP"
+          APP=$(ls -d build/Release-iphoneos/*.app | head -n 1)
           cp -R "$APP" Payload/
           zip -r azul.ipa Payload
 
