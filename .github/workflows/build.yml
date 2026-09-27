@@ -1,24 +1,28 @@
-name: Build IPA
-on:
-  workflow_dispatch:
+name: build
+on: [push]
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unzip
+
+      - name: Fix Xcode version
         run: |
-          if ls *.zip 1>/dev/null 2>&1; then for z in *.zip; do unzip -o "$z"; rm "$z"; done; fi
+          sudo xcode-select -s /Applications/Xcode_16.2.app
+          xcodebuild -version
+
       - name: Build
         run: |
-          PROJ="./3105-2.0/ThreeOneOSFive.xcodeproj"
-          xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=3105-2.0/build/Build
-          APP=$(find . -name "*.app" | head -n 1)
-          echo "APP ENCONTRADA: $APP"
+          PROJ=$(find. -name "*.xcodeproj" | head -n 1)
+          echo "Proyecto: $PROJ"
+          # Limpia assets rotos y compila
+          xcodebuild -project "$PROJ" -target 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" IPHONEOS_DEPLOYMENT_TARGET=15.0 SWIFT_VERSION=5.0 SYMROOT=$(pwd)/build build
+          APP=$(find./build -name "*.app" | head -n 1)
           mkdir -p Payload
           cp -R "$APP" Payload/
-          zip -r app-unsigned.ipa Payload
+          zip -r azul.ipa Payload
+
       - uses: actions/upload-artifact@v4
         with:
-          name: IPA
-          path: "*.ipa"
+          name: IPA-AZUL-FIXED
+          path: azul.ipa
