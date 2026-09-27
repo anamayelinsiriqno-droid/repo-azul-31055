@@ -8,11 +8,27 @@ jobs:
 
       - name: Build
         run: |
-          xcodebuild -version
-          PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          echo "Proyecto: $PROJ"
-          xcodebuild -project "$PROJ" -target 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" IPHONEOS_DEPLOYMENT_TARGET=15.0 SYMROOT=$(pwd)/build build
-          APP=$(find./build -name "*.app" -type d | head -n 1)
+          # Busca donde esta realmente
+          find. -name "*.xcodeproj"
+          PROJ="repo-azul-31055/3105-2.0/ThreeOneOSFive.xcodeproj"
+          # Si tienes la carpeta doble, usa esta:
+          if [! -d "$PROJ" ]; then
+            PROJ=$(find. -name "*.xcodeproj" | head -n 1)
+          fi
+          echo "USANDO PROYECTO: $PROJ"
+
+          xcodebuild -project "$PROJ" \
+            -target 3105 \
+            -sdk iphoneos \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            SYMROOT=$(pwd)/build build
+
+          APP=$(find. -name "*.app" -type d | head -n 1)
           echo "APP: $APP"
           mkdir -p Payload
           cp -R "$APP" Payload/
