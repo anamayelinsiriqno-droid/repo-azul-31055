@@ -1,27 +1,24 @@
-name: build
-on: [push]
+name: Build IPA
+on:
+  workflow_dispatch:
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Descomprimir y Parchear TODO a iOS 17
+      - name: Unzip
         run: |
-          ZIP=$(ls *.zip | head -n 1)
-          unzip -o "$ZIP"
-          find. -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0/IPHONEOS_DEPLOYMENT_TARGET = 17.0/g' {} \; 2>/dev/null || find. -name "project.pbxproj" -exec sed -i 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0/IPHONEOS_DEPLOYMENT_TARGET = 17.0/g' {} \;
-
-      - name: Compilar IPA
+          if ls *.zip 1>/dev/null 2>&1; then for z in *.zip; do unzip -o "$z"; rm "$z"; done; fi
+      - name: Build
         run: |
-          PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO IPHONEOS_DEPLOYMENT_TARGET=17.0 SYMROOT=$(pwd)/build build
+          PROJ="./3105-2.0/ThreeOneOSFive.xcodeproj"
+          xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=3105-2.0/build/Build
+          APP=$(find . -name "*.app" | head -n 1)
+          echo "APP ENCONTRADA: $APP"
           mkdir -p Payload
-          APP=$(find build/Release-iphoneos -name "*.app" | head -n 1)
           cp -R "$APP" Payload/
-          zip -r azul.ipa Payload
-
-      - name: Subir IPA
-        uses: actions/upload-artifact@v4
+          zip -r app-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
         with:
-          name: IPA-AZUL-3105
-          path: azul.ipa
+          name: IPA
+          path: "*.ipa"
