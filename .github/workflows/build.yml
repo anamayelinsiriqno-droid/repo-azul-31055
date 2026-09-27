@@ -34,10 +34,27 @@ jobs:
           xcode-select -p
 
       - name: Verify project
-        run: |
-          set -euo pipefail
-          test -f "$PROJECT/project.pbxproj"
-          xcodebuild -project "$PROJECT" -list
+  shell: bash
+  run: |
+    set -uo pipefail
+
+    echo "PROJECT = $PROJECT"
+    echo "Contenido del proyecto:"
+    ls -la "$PROJECT"
+    echo
+    echo "Ejecutando xcodebuild -list..."
+    
+    xcodebuild \
+      -project "$PROJECT" \
+      -list \
+      2>&1 | tee verify-project.log
+
+    STATUS=${PIPESTATUS[0]}
+
+    echo
+    echo "xcodebuild exit code: $STATUS"
+
+    exit "$STATUS"
 
       - name: Clean
         run: |
