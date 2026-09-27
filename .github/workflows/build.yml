@@ -5,12 +5,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Descomprimir
         run: |
           ZIP=$(ls *.zip | head -n 1)
           unzip -o "$ZIP"
-
       - name: Compilar IPA
         run: |
           PROJ=$(find. -name "*.xcodeproj" | head -n 1)
@@ -21,7 +19,6 @@ jobs:
           APP=$(find build -name "*.app" | head -n 1)
           cp -R "$APP" Payload/
           zip -r azul.ipa Payload
-
       - name: Subir IPA
         uses: actions/upload-artifact@v4
         with:
