@@ -6,15 +6,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Descomprimir source
+      - name: Descomprimir y buscar
         run: |
           unzip -o Slowthv7-3105-2.0-source.zip
-          ls -R
+          ls -la
+          echo "--- PROYECTOS ---"
+          find. -name "*.xcodeproj"
 
       - name: Compilar IPA
         run: |
           PROJ=$(find. -name "*.xcodeproj" | head -n 1)
-          echo "Proyecto: $PROJ"
+          echo "Proyecto encontrado: $PROJ"
 
           xcodebuild -project "$PROJ" \
             -scheme ThreeOneOSFive \
@@ -26,7 +28,8 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             SYMROOT=$(pwd)/build build
 
-          APP=$(find build -name "*.app" | head -n 1)
+          APP=$(find./build -name "*.app" | head -n 1)
+          echo "App: $APP"
           mkdir -p Payload
           cp -R "$APP" Payload/
           zip -r azul.ipa Payload
