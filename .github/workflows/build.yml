@@ -10,7 +10,6 @@ jobs:
         run: |
           ZIP=$(ls *.zip | head -n 1)
           unzip -o "$ZIP"
-          ls -lh
 
       - name: Compilar IPA
         run: |
