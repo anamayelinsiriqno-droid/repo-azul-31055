@@ -1,58 +1,24 @@
-name: Build IPA Unsigned
-
+name: Build IPA
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-
 jobs:
   build:
-    runs-on: macos-14
-
+    runs-on: macos-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build unsigned
+      - uses: actions/checkout@v4
+      - name: Unzip
         run: |
-          set -e
-
-          xcodebuild \
-            -project "ThreeOneOSFive.xcodeproj" \
-            -target "3105" \
-            -configuration Release \
-            -sdk iphoneos \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=NO \
-            clean build \
-            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/build"
-
-      - name: Create unsigned IPA
+          if ls *.zip 1>/dev/null 2>&1; then for z in *.zip; do unzip -o "$z"; rm "$z"; done; fi
+      - name: Build
         run: |
-          set -e
-
+          PROJ="./3105-2.0/ThreeOneOSFive.xcodeproj"
+          xcodebuild -project "$PROJ" -alltargets -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=3105-2.0/build/Build
+          APP=$(find . -name "*.app" | head -n 1)
+          echo "APP ENCONTRADA: $APP"
           mkdir -p Payload
-
-          APP=$(find "$GITHUB_WORKSPACE/build" \
-            -maxdepth 1 \
-            -type d \
-            -name "*.app" \
-            -print -quit)
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: No se encontró el .app"
-            exit 1
-          fi
-
           cp -R "$APP" Payload/
-
-          zip -qry "Slowthv7-3105-unsigned.ipa" Payload
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
+          zip -r app-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
         with:
-          name: Slowthv7-3105-unsigned
-          path: Slowthv7-3105-unsigned.ipa
+          name: IPA
+          path: "*.ipa"
