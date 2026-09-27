@@ -16,7 +16,7 @@ jobs:
           PROJ=$(ls -d 3105-2.0/*.xcodeproj | head -n 1)
           echo "Proyecto: $PROJ"
           xcodebuild -list -project "$PROJ"
-          xcodebuild -project "$PROJ" -target ThreeOneOSFive -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" SYMROOT=$(pwd)/build build
+          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" SYMROOT=$(pwd)/build build
           mkdir -p Payload
           cp -R build/Release-iphoneos/*.app Payload/
           zip -r azul.ipa Payload
