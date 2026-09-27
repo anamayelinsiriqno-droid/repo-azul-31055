@@ -9,35 +9,24 @@ jobs:
       - name: Descomprimir y Parchear
         run: |
           unzip -o Slowthv7-3105-2.0-source.zip
-          echo "--- Buscando App.swift ---"
-          find 3105-2.0 -name "App.swift"
+          APP_FILE=$(find 3105-2.0 -name "App.swift" | head -n 1)
+          echo "Parcheando: $APP_FILE"
 
-          # Crear OnboardingStore donde esté App.swift
-          APP_DIR=$(dirname $(find 3105-2.0 -name "App.swift" | head -n 1))
-          echo "App.swift está en: $APP_DIR"
+          # Fix 1: Quitar OnboardingStore
+          sed -i '' 's/OnboardingStore.shouldShow()/false/g' "$APP_FILE" 2>/dev/null || sed -i 's/OnboardingStore.shouldShow()/false/g' "$APP_FILE"
+          sed -i '' 's/OnboardingStore.markCompleted()/UserDefaults.standard.set(true, forKey: "onboarding.completed")/g' "$APP_FILE" 2>/dev/null || sed -i 's/OnboardingStore.markCompleted()/UserDefaults.standard.set(true, forKey: "onboarding.completed")/g' "$APP_FILE"
+          sed -i '' '/OnboardingStore/d' "$APP_FILE" 2>/dev/null || true
 
-          cat > "$APP_DIR/OnboardingStore.swift" << 'EOF'
-          import Foundation
-          class OnboardingStore {
-              static func shouldShow() -> Bool { return false }
-              static func markCompleted() { UserDefaults.standard.set(true, forKey: "onboarding.completed") }
-          }
-          EOF
+          # Fix 2: Quitar el "phase in" que da error en Xcode nuevo
+          sed -i '' 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/g' "$APP_FILE" 2>/dev/null || sed -i 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/g' "$APP_FILE"
+          sed -i '' 's/{ phase in/{/g' "$APP_FILE" 2>/dev/null || sed -i 's/{ phase in/{/g' "$APP_FILE"
 
-          # También lo ponemos en helpers por si acaso
-          mkdir -p 3105-2.0/ThreeOneOSFive/helpers
-          cp "$APP_DIR/OnboardingStore.swift" 3105-2.0/ThreeOneOSFive/helpers/ 2>/dev/null || true
-
-          # Fix del onChange que te daba error en linea 90
-          find 3105-2.0 -name "*.swift" -exec sed -i '' 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/' {} \; 2>/dev/null || find 3105-2.0 -name "*.swift" -exec sed -i 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/' {} \;
-
-          echo "Parche listo"
-          ls -la "$APP_DIR" | grep Onboard
+          echo "Parcheado:"
+          cat "$APP_FILE" | head -n 100
 
       - name: Compilar IPA
         run: |
           PROJ=$(ls -d 3105-2.0/*.xcodeproj | head -n 1)
-          echo "Compilando: $PROJ"
           xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" SYMROOT=$(pwd)/build build
           mkdir -p Payload
           cp -R build/Release-iphoneos/*.app Payload/
