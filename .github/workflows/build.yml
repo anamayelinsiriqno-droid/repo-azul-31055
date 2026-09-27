@@ -19,7 +19,7 @@ jobs:
           set -e
 
           xcodebuild \
-            -project "3105-2.0/ThreeOneOSFive.xcodeproj" \
+            -project "ThreeOneOSFive.xcodeproj" \
             -target "3105" \
             -configuration Release \
             -sdk iphoneos \
@@ -43,15 +43,13 @@ jobs:
             -print -quit)
 
           if [ -z "$APP" ]; then
-            echo "No se encontró el .app"
+            echo "ERROR: No se encontró el .app"
             exit 1
           fi
 
           cp -R "$APP" Payload/
 
           zip -qry "Slowthv7-3105-unsigned.ipa" Payload
-
-          rm -rf Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
