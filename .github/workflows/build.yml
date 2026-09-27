@@ -1,4 +1,4 @@
-- name: Build
+name: Build
   run: |
     PROJ="./3105-2.0/ThreeOneOSFive.xcodeproj"
     # fix SettingsView - windows deprecated
