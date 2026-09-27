@@ -1,4 +1,4 @@
-name: Build 3105 IPA
+name:Build 3105 IPA v2
 
 on:
   workflow_dispatch: {}
