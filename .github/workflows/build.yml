@@ -5,67 +5,33 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Descomprimir y Parchear TODO
+      - name: Descomprimir y Parchear TODO a iOS 17
         run: |
           unzip -o Slowthv7-3105-2.0-source.zip
-          APP_FILE=$(find 3105-2.0 -name "App.swift" | head -n 1)
-          echo "Parcheando: $APP_FILE"
+          find 3105-2.0 -name "project.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \; 2>/dev/null || find 3105-2.0 -name "project.pbxproj" -exec sed -i -E 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' {} \;
 
+          APP_FILE=$(find 3105-2.0 -name "App.swift" | head -n 1)
           python3 << 'PY'
           import pathlib, re, glob
-          app_path = pathlib.Path(glob.glob("3105-2.0/**/App.swift", recursive=True)[0])
-          code = app_path.read_text()
-
-          # FIX 1: OnboardingStore
-          code = code.replace("OnboardingStore.shouldShow()", "false")
-          code = code.replace("OnboardingStore.markCompleted()", 'UserDefaults.standard.set(true, forKey: "onboarding.completed")')
-          code = re.sub(r'.*OnboardingStore.*\n', '', code)
-
-          # FIX 2: onChange iOS 16 compatible - REEMPLAZO TOTAL DEL BLOQUE
-          # Busca el onChange y lo reemplaza por version vieja compatible
-          code = re.sub(
-              r'\.onChange\(of:\s*scenePhase\)\s*\{[^}]*\}',
-              '.onChange(of: scenePhase) { newPhase in guard newPhase ==.active else { return } }',
-              code,
-              flags=re.DOTALL
-          )
-          # Si quedó el simple.onChange(of: scenePhase) {
-          code = code.replace(".onChange(of: scenePhase) {", ".onChange(of: scenePhase) { newPhase in")
-          code = code.replace("scenePhase ==.active", "newPhase ==.active")
-          code = code.replace("scenePhase ==.active", "newPhase ==.active")
-
-          # Asegurar que no quede "phase" suelto
-          if "phase ==" in code and "scenePhase" not in code.split("phase ==")[0][-50:]:
-              code = code.replace("phase ==", "newPhase ==")
-
-          app_path.write_text(code)
-          print("Parcheado OK - Linea 85-95:")
-          print("\n".join(code.splitlines()[80:100]))
+          p = pathlib.Path(glob.glob("3105-2.0/**/App.swift", recursive=True)[0])
+          c = p.read_text()
+          c = c.replace("OnboardingStore.shouldShow()", "false")
+          c = c.replace("OnboardingStore.markCompleted()", 'UserDefaults.standard.set(true, forKey: "onboarding.completed")')
+          c = re.sub(r'.*OnboardingStore.*\n', '', c)
+          c = re.sub(r'\.onChange\(of:\s*scenePhase\)[^\{]*\{', '.onChange(of: scenePhase) { newPhase in', c)
+          c = c.replace("scenePhase ==.active", "newPhase ==.active")
+          c = c.replace("phase ==.active", "newPhase ==.active")
+          p.write_text(c)
           PY
-
       - name: Compilar IPA
         run: |
           PROJ=$(ls -d 3105-2.0/*.xcodeproj | head -n 1)
-          echo "Proyecto: $PROJ"
-          # Forzamos iOS 17 para que no falle el onChange si queda algo
-          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" IPHONEOS_DEPLOYMENT_TARGET=17.0 SYMROOT=$(pwd)/build build 2>&1 | tee build.log
-
-          echo "---- RESUMEN ERRORES ----"
-          grep -i "error:" build.log | tail -n 20 || echo "COMPILACION OK"
-
+          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" IPHONEOS_DEPLOYMENT_TARGET=17.0 SYMROOT=$(pwd)/build build
           mkdir -p Payload
-          APP_PATH=$(find build/Release-iphoneos -name "*.app" -type d | head -n 1)
-          echo "APP: $APP_PATH"
-          cp -R "$APP_PATH" Payload/
+          cp -R $(find build/Release-iphoneos -name "*.app" | head -n 1) Payload/
           zip -r azul.ipa Payload
-          ls -lh azul.ipa
-
-      - name: Subir IPA y Log
-        if: always()
+      - name: Subir IPA
         uses: actions/upload-artifact@v4
         with:
           name: IPA-AZUL-3105
-          path: |
-            azul.ipa
-            build.log
+          path: azul.ipa
