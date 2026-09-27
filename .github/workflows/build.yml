@@ -5,24 +5,23 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Descomprimir y Parchear
         run: |
           unzip -o Slowthv7-3105-2.0-source.zip
           APP_FILE=$(find 3105-2.0 -name "App.swift" | head -n 1)
           echo "Parcheando: $APP_FILE"
 
-          # Fix 1: Quitar OnboardingStore
+          # Fix OnboardingStore
           sed -i '' 's/OnboardingStore.shouldShow()/false/g' "$APP_FILE" 2>/dev/null || sed -i 's/OnboardingStore.shouldShow()/false/g' "$APP_FILE"
           sed -i '' 's/OnboardingStore.markCompleted()/UserDefaults.standard.set(true, forKey: "onboarding.completed")/g' "$APP_FILE" 2>/dev/null || sed -i 's/OnboardingStore.markCompleted()/UserDefaults.standard.set(true, forKey: "onboarding.completed")/g' "$APP_FILE"
-          sed -i '' '/OnboardingStore/d' "$APP_FILE" 2>/dev/null || true
 
-          # Fix 2: Quitar el "phase in" que da error en Xcode nuevo
+          # Fix onChange - ESTE ES EL FIX NUEVO
+          sed -i '' 's/phase ==.active/scenePhase ==.active/g' "$APP_FILE" 2>/dev/null || sed -i 's/phase ==.active/scenePhase ==.active/g' "$APP_FILE"
+          sed -i '' 's/guard phase/guard scenePhase/g' "$APP_FILE" 2>/dev/null || sed -i 's/guard phase/guard scenePhase/g' "$APP_FILE"
           sed -i '' 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/g' "$APP_FILE" 2>/dev/null || sed -i 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/g' "$APP_FILE"
-          sed -i '' 's/{ phase in/{/g' "$APP_FILE" 2>/dev/null || sed -i 's/{ phase in/{/g' "$APP_FILE"
 
-          echo "Parcheado:"
-          cat "$APP_FILE" | head -n 100
+          echo "Linea 88-95 parcheada:"
+          sed -n '85,100p' "$APP_FILE"
 
       - name: Compilar IPA
         run: |
