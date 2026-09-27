@@ -6,24 +6,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Descomprimir
+      - name: Descomprimir y Parchear
         run: |
           unzip -o Slowthv7-3105-2.0-source.zip
+          ls -d 3105-2.0/*.xcodeproj
+
+          # 1. Creamos el OnboardingStore que falta
+          cat > 3105-2.0/ThreeOneOSFive/helpers/OnboardingStore.swift << 'EOF'
+          import Foundation
+          class OnboardingStore {
+              static func shouldShow() -> Bool { return false }
+              static func markCompleted() { UserDefaults.standard.set(true, forKey: "onboarding.completed") }
+          }
+          EOF
+
+          # 2. Arreglamos el onChange que falla en iOS 16
+          sed -i '' 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/' 3105-2.0/ThreeOneOSFive/App.swift || sed -i 's/.onChange(of: scenePhase) { phase in/.onChange(of: scenePhase) {/' 3105-2.0/ThreeOneOSFive/App.swift
+
+          echo "Parche aplicado"
+          grep -n "OnboardingStore" 3105-2.0/ThreeOneOSFive/App.swift
 
       - name: Compilar IPA
         run: |
           PROJ=$(ls -d 3105-2.0/*.xcodeproj | head -n 1)
-          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" SYMROOT=$(pwd)/build SWIFT_TREAT_WARNINGS_AS_ERRORS=NO COMPILER_INDEX_STORE_ENABLE=NO build | tee build.log
-          echo "--- ERRORES ---"
-          grep -A5 "error:" build.log | head -n 100
+          xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" SYMROOT=$(pwd)/build build
           mkdir -p Payload
-          cp -R build/Release-iphoneos/*.app Payload/ || true
-          zip -r azul.ipa Payload || true
+          cp -R build/Release-iphoneos/*.app Payload/
+          zip -r azul.ipa Payload
 
-      - name: Subir IPA y Log
+      - name: Subir IPA
         uses: actions/upload-artifact@v4
         with:
           name: IPA-AZUL-3105
-          path: |
-            azul.ipa
-            build.log
+          path: azul.ipa
