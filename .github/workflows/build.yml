@@ -1,545 +1,60 @@
-name:Build 3105 IPA v2
+name: Build IPA Unsigned
 
 on:
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   build:
-    name: Build 3105 IPA
-    runs-on: macos-26
-
-    env:
-      TARGET: "3105"
-      CONFIGURATION: "Release"
-      SDK: "iphoneos"
-      SOURCE_DIR: "${{ github.workspace }}/source"
-      BUILD_DIR: "${{ github.workspace }}/build"
-      ARCHIVE_PATH: "${{ github.workspace }}/build/3105.xcarchive"
+    runs-on: macos-14
 
     steps:
-
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Find source ZIP
-        shell: bash
+      - name: Build unsigned
         run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "BUSCANDO SOURCE ZIP"
-          echo "=========================================="
-
-          ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
-            -maxdepth 2 \
-            -type f \
-            -iname '*.zip' \
-            -print \
-            -quit)"
-
-          if [[ -z "$ZIP_FILE" ]]; then
-            echo "::error::No se encontró ningún ZIP de source en el repositorio."
-            exit 1
-          fi
-
-          echo "ZIP encontrado:"
-          echo "$ZIP_FILE"
-
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-
-      - name: Extract source
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf "$SOURCE_DIR"
-          mkdir -p "$SOURCE_DIR"
-
-          echo "=========================================="
-          echo "EXTRAYENDO SOURCE"
-          echo "=========================================="
-
-          /usr/bin/unzip \
-            -q \
-            "$ZIP_FILE" \
-            -d "$SOURCE_DIR"
-
-          echo
-          echo "Proyectos Xcode encontrados:"
-
-          find "$SOURCE_DIR" \
-            -type d \
-            -name "*.xcodeproj" \
-            -print
-
-      - name: Select installed Xcode
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "BUSCANDO XCODE"
-          echo "=========================================="
-
-          XCODE_APP="$(
-            find /Applications \
-              -maxdepth 1 \
-              -type d \
-              -name "Xcode*.app" \
-              -print \
-              | sort -V \
-              | tail -n 1
-          )"
-
-          if [[ -z "$XCODE_APP" ]]; then
-            echo "::error::No se encontró Xcode en /Applications."
-            exit 1
-          fi
-
-          XCODE_PATH="$XCODE_APP/Contents/Developer"
-
-          sudo xcode-select -s "$XCODE_PATH"
-
-          echo "Xcode seleccionado:"
-          echo "$XCODE_APP"
-
-          echo
-          xcode-select -p
-          xcodebuild -version
-
-      - name: Locate Xcode project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT_PATH="$(
-            find "$SOURCE_DIR" \
-              -type d \
-              -name "*.xcodeproj" \
-              -print \
-              | head -n 1
-          )"
-
-          if [[ -z "$PROJECT_PATH" ]]; then
-            echo "::error::No se encontró ningún archivo .xcodeproj dentro de la source."
-
-            echo
-            echo "Contenido de source:"
-
-            find "$SOURCE_DIR" \
-              -maxdepth 8 \
-              -print \
-              | sort
-
-            exit 1
-          fi
-
-          if [[ ! -f "$PROJECT_PATH/project.pbxproj" ]]; then
-            echo "::error::El proyecto no contiene project.pbxproj."
-            exit 1
-          fi
-
-          echo "Proyecto encontrado:"
-          echo "$PROJECT_PATH"
-
-          echo "PROJECT_PATH=$PROJECT_PATH" >> "$GITHUB_ENV"
-
-      - name: Inspect Xcode project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "XCODEBUILD -LIST"
-          echo "=========================================="
+          set -e
 
           xcodebuild \
-            -project "$PROJECT_PATH" \
-            -list
-
-      - name: Find target 3105
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "BUSCANDO TARGET 3105"
-          echo "=========================================="
-
-          if ! grep -q 'name = 3105;' "$PROJECT_PATH/project.pbxproj"; then
-            echo "::error::No se encontró un target llamado 3105."
-
-            echo
-            echo "Nombres encontrados:"
-
-            grep -nE 'name = .*;' \
-              "$PROJECT_PATH/project.pbxproj" \
-              | head -n 100 \
-              || true
-
-            exit 1
-          fi
-
-          echo "Target 3105 encontrado."
-
-      - name: Create shared scheme
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT_DIR="$PROJECT_PATH"
-          PROJECT_NAME="$(basename "$PROJECT_DIR" .xcodeproj)"
-
-          SCHEME_DIR="$PROJECT_DIR/xcshareddata/xcschemes"
-          SCHEME_FILE="$SCHEME_DIR/3105.xcscheme"
-
-          mkdir -p "$SCHEME_DIR"
-
-          echo "=========================================="
-          echo "CREANDO SCHEME 3105"
-          echo "=========================================="
-
-          TARGET_ID="$(
-            awk '
-              /isa = PBXNativeTarget;/ {
-                id=$1
-                in_target=1
-              }
-
-              in_target && /name = 3105;/ {
-                gsub(/[[:space:]]|=/, "", id)
-                print id
-                exit
-              }
-
-              in_target && /^};/ {
-                in_target=0
-              }
-            ' "$PROJECT_PATH/project.pbxproj"
-          )"
-
-          if [[ -z "$TARGET_ID" ]]; then
-            echo "::error::No se pudo obtener el BlueprintIdentifier del target 3105."
-            exit 1
-          fi
-
-          echo "BlueprintIdentifier:"
-          echo "$TARGET_ID"
-
-          cat > "$SCHEME_FILE" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<Scheme
-   LastUpgradeVersion = "2600"
-   version = "1.7">
-
-   <BuildAction
-      parallelizeBuildables = "YES"
-      buildImplicitDependencies = "YES">
-
-      <BuildActionEntries>
-
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "$TARGET_ID"
-               BuildableName = "3105.app"
-               BlueprintName = "3105"
-               ReferencedContainer = "container:$PROJECT_NAME.xcodeproj">
-            </BuildableReference>
-
-         </BuildActionEntry>
-
-      </BuildActionEntries>
-
-   </BuildAction>
-
-   <TestAction
-      buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
-      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES">
-   </TestAction>
-
-   <LaunchAction
-      buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
-      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      launchStyle = "0"
-      useCustomWorkingDirectory = "NO"
-      ignoresPersistentStateOnLaunch = "NO"
-      debugDocumentVersioning = "YES"
-      allowLocationSimulation = "YES">
-   </LaunchAction>
-
-   <ProfileAction
-      buildConfiguration = "Release"
-      shouldUseLaunchSchemeArgsEnv = "YES">
-   </ProfileAction>
-
-   <AnalyzeAction
-      buildConfiguration = "Debug">
-   </AnalyzeAction>
-
-   <ArchiveAction
-      buildConfiguration = "Release"
-      revealArchiveInOrganizer = "YES">
-   </ArchiveAction>
-
-</Scheme>
-EOF
-
-          echo
-          echo "Scheme creado:"
-          cat "$SCHEME_FILE"
-
-      - name: Verify scheme
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "VERIFICANDO SCHEME"
-          echo "=========================================="
-
-          xcodebuild \
-            -project "$PROJECT_PATH" \
-            -list
-
-      - name: Resolve Swift packages if present
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PACKAGE_FILE="$(
-            find "$SOURCE_DIR" \
-              -type f \
-              -name "Package.swift" \
-              -print \
-              | head -n 1
-          )"
-
-          if [[ -n "$PACKAGE_FILE" ]]; then
-            echo "Package.swift encontrado:"
-            echo "$PACKAGE_FILE"
-
-            xcodebuild \
-              -project "$PROJECT_PATH" \
-              -scheme "3105" \
-              -resolvePackageDependencies
-          else
-            echo "No se encontraron Swift Package Manager manifests."
-          fi
-
-      - name: Show build settings
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          xcodebuild \
-            -project "$PROJECT_PATH" \
-            -scheme "3105" \
-            -configuration "$CONFIGURATION" \
-            -sdk "$SDK" \
-            -showBuildSettings \
-            2>&1 | tee "$GITHUB_WORKSPACE/build-settings.log"
-
-      - name: Clean
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf "$BUILD_DIR"
-
-          mkdir -p "$BUILD_DIR"
-
-          xcodebuild \
-            -project "$PROJECT_PATH" \
-            -scheme "3105" \
-            -configuration "$CONFIGURATION" \
-            -sdk "$SDK" \
-            clean
-
-      - name: Build and Archive
-        shell: bash
-        run: |
-          set -o pipefail
-
-          echo "=========================================="
-          echo "BUILD / ARCHIVE"
-          echo "=========================================="
-
-          mkdir -p "$BUILD_DIR"
-
-          xcodebuild \
-            -project "$PROJECT_PATH" \
-            -scheme "3105" \
-            -configuration "$CONFIGURATION" \
-            -sdk "$SDK" \
-            -destination "generic/platform=iOS" \
-            -archivePath "$ARCHIVE_PATH" \
+            -project "3105-2.0/ThreeOneOSFive.xcodeproj" \
+            -target "3105" \
+            -configuration Release \
+            -sdk iphoneos \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            archive \
-            2>&1 | tee "$BUILD_DIR/build.log"
-
-      - name: Verify archive
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "VERIFICANDO ARCHIVE"
-          echo "=========================================="
-
-          if [[ ! -d "$ARCHIVE_PATH" ]]; then
-            echo "::error::No se creó el XCArchive."
-
-            echo
-            echo "Contenido de build:"
-
-            find "$BUILD_DIR" \
-              -maxdepth 8 \
-              -print \
-              | sort
-
-            exit 1
-          fi
-
-          echo "Archive encontrado:"
-          ls -lah "$ARCHIVE_PATH"
-
-      - name: Find application
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP_PATH="$(
-            find "$ARCHIVE_PATH/Products/Applications" \
-              -maxdepth 1 \
-              -type d \
-              -name "*.app" \
-              -print \
-              | head -n 1
-          )"
-
-          if [[ -z "$APP_PATH" ]]; then
-            echo "::error::No se encontró ninguna aplicación .app."
-
-            find "$ARCHIVE_PATH" \
-              -maxdepth 8 \
-              -print \
-              | sort
-
-            exit 1
-          fi
-
-          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
-
-          echo
-          echo "Aplicación encontrada:"
-          echo "$APP_PATH"
-
-      - name: Verify application
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=========================================="
-          echo "APPLICATION"
-          echo "=========================================="
-
-          ls -lah "$APP_PATH"
-
-          echo
-          echo "Bundle ID:"
-
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleIdentifier" \
-            "$APP_PATH/Info.plist" \
-            || true
-
-          echo
-          echo "Version:"
-
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleShortVersionString" \
-            "$APP_PATH/Info.plist" \
-            || true
+            AD_HOC_CODE_SIGNING_ALLOWED=NO \
+            clean build \
+            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/build"
 
       - name: Create unsigned IPA
-        shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          IPA_PATH="$BUILD_DIR/3105-unsigned.ipa"
+          mkdir -p Payload
 
-          rm -rf "$BUILD_DIR/Payload"
-          rm -f "$IPA_PATH"
+          APP=$(find "$GITHUB_WORKSPACE/build" \
+            -maxdepth 1 \
+            -type d \
+            -name "*.app" \
+            -print -quit)
 
-          mkdir -p "$BUILD_DIR/Payload"
+          if [ -z "$APP" ]; then
+            echo "No se encontró el .app"
+            exit 1
+          fi
 
-          cp -R \
-            "$APP_PATH" \
-            "$BUILD_DIR/Payload/3105.app"
+          cp -R "$APP" Payload/
 
-          cd "$BUILD_DIR"
+          zip -qry "Slowthv7-3105-unsigned.ipa" Payload
 
-          /usr/bin/zip \
-            -qry \
-            "$IPA_PATH" \
-            Payload
-
-          echo
-          echo "=========================================="
-          echo "IPA CREADA"
-          echo "=========================================="
-
-          ls -lh "$IPA_PATH"
-
-          /usr/bin/file "$IPA_PATH"
-
-          echo
-          echo "CONTENIDO:"
-
-          /usr/bin/unzip -l "$IPA_PATH"
+          rm -rf Payload
 
       - name: Upload IPA
-        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: 3105-unsigned-ipa
-          path: build/3105-unsigned.ipa
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload XCArchive
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: 3105-xcarchive
-          path: build/3105.xcarchive
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: 3105-build-diagnostics
-          path: |
-            build/build.log
-            build-settings.log
-          if-no-files-found: warn
-          retention-days: 30
+          name: Slowthv7-3105-unsigned
+          path: Slowthv7-3105-unsigned.ipa
