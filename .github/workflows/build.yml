@@ -16,73 +16,177 @@ jobs:
     runs-on: macos-26
 
     env:
-      PROJECT: 3105-2.0/ThreeOneOSFive.xcodeproj
       TARGET: "3105"
-      CONFIGURATION: Release
-      SDK: iphoneos
+      CONFIGURATION: "Release"
+      SDK: "iphoneos"
       ARCHIVE_PATH: ${{ github.workspace }}/build/3105.xcarchive
       DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
 
     steps:
 
-      # --------------------------------------------------
+      # ==============================================
       # 1. Descargar el repositorio
-      # --------------------------------------------------
+      # ==============================================
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # --------------------------------------------------
-      # 2. Seleccionar Xcode
-      # --------------------------------------------------
+      # ==============================================
+      # 2. Mostrar exactamente lo que GitHub descargó
+      # ==============================================
+      - name: Debug repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "DIRECTORIO ACTUAL"
+          echo "=========================================="
+          pwd
+
+          echo
+          echo "=========================================="
+          echo "GITHUB WORKSPACE"
+          echo "=========================================="
+          echo "$GITHUB_WORKSPACE"
+
+          echo
+          echo "=========================================="
+          echo "CONTENIDO DE LA RAÍZ"
+          echo "=========================================="
+          ls -la "$GITHUB_WORKSPACE"
+
+          echo
+          echo "=========================================="
+          echo "TODOS LOS .XCODEPROJ"
+          echo "=========================================="
+
+          find "$GITHUB_WORKSPACE" \
+            -type d \
+            -name "*.xcodeproj" \
+            -print
+
+          echo
+          echo "=========================================="
+          echo "ARCHIVOS DEL REPOSITORIO"
+          echo "=========================================="
+
+          find "$GITHUB_WORKSPACE" \
+            -maxdepth 5 \
+            -type f \
+            -print | sort | head -500
+
+      # ==============================================
+      # 3. Seleccionar Xcode
+      # ==============================================
       - name: Select Xcode
         shell: bash
         run: |
           set -euo pipefail
 
-          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          sudo xcode-select \
+            -s /Applications/Xcode_26.6.app/Contents/Developer
 
-          echo "Xcode:"
+          echo "=========================================="
+          echo "XCODE VERSION"
+          echo "=========================================="
+
           xcodebuild -version
 
-          echo "Developer directory:"
+          echo
+          echo "DEVELOPER DIRECTORY:"
           xcode-select -p
 
-      # --------------------------------------------------
-      # 3. Verificar que el proyecto existe
-      # --------------------------------------------------
+      # ==============================================
+      # 4. Encontrar automáticamente el proyecto
+      # ==============================================
+      - name: Find Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Buscando proyectos Xcode..."
+
+          PROJECT_PATH="$(
+            find "$GITHUB_WORKSPACE" \
+              -type d \
+              -name "*.xcodeproj" \
+              -print \
+              -quit
+          )"
+
+          if [[ -z "$PROJECT_PATH" ]]; then
+
+            echo "::error::No se encontró ningún .xcodeproj."
+
+            echo
+            echo "Proyectos disponibles:"
+            find "$GITHUB_WORKSPACE" \
+              -type d \
+              -name "*.xcodeproj" \
+              -print || true
+
+            echo
+            echo "Contenido del repositorio:"
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 5 \
+              -print | head -500
+
+            exit 1
+          fi
+
+          echo
+          echo "=========================================="
+          echo "PROYECTO ENCONTRADO"
+          echo "=========================================="
+
+          echo "$PROJECT_PATH"
+
+          PROJECT_RELATIVE="${PROJECT_PATH#$GITHUB_WORKSPACE/}"
+
+          echo
+          echo "Ruta relativa:"
+          echo "$PROJECT_RELATIVE"
+
+          echo "PROJECT=$PROJECT_RELATIVE" >> "$GITHUB_ENV"
+
+          if [[ ! -f "$PROJECT_PATH/project.pbxproj" ]]; then
+            echo "::error::No se encontró project.pbxproj."
+
+            ls -la "$PROJECT_PATH"
+
+            exit 1
+          fi
+
+          echo
+          echo "project.pbxproj encontrado correctamente."
+
+      # ==============================================
+      # 5. Inspeccionar proyecto
+      # ==============================================
       - name: Verify project
         shell: bash
         run: |
           set -uo pipefail
 
-          echo "========================================"
-          echo "PROJECT:"
+          echo "=========================================="
+          echo "PROYECTO"
+          echo "=========================================="
+
           echo "$PROJECT"
-          echo "========================================"
-
-          if [[ ! -d "$PROJECT" ]]; then
-            echo "::error::No se encontró el proyecto:"
-            echo "$PROJECT"
-            echo
-            echo "Proyectos encontrados:"
-            find . -type d -name "*.xcodeproj" -print
-            exit 1
-          fi
-
-          if [[ ! -f "$PROJECT/project.pbxproj" ]]; then
-            echo "::error::El project.pbxproj no existe."
-            ls -la "$PROJECT"
-            exit 1
-          fi
 
           echo
-          echo "Proyecto encontrado correctamente:"
+          echo "=========================================="
+          echo "CONTENIDO"
+          echo "=========================================="
+
           ls -la "$PROJECT"
 
           echo
-          echo "========================================"
-          echo "EJECUTANDO XCODEBUILD -LIST"
-          echo "========================================"
+          echo "=========================================="
+          echo "XCODEBUILD -LIST"
+          echo "=========================================="
 
           xcodebuild \
             -project "$PROJECT" \
@@ -92,22 +196,24 @@ jobs:
           STATUS=${PIPESTATUS[0]}
 
           echo
-          echo "========================================"
-          echo "xcodebuild exit code: $STATUS"
-          echo "========================================"
+          echo "=========================================="
+          echo "EXIT CODE: $STATUS"
+          echo "=========================================="
 
           if [[ "$STATUS" -ne 0 ]]; then
             echo "::error::xcodebuild -list falló."
+
             echo
-            echo "Contenido de verify-project.log:"
+            echo "LOG COMPLETO:"
             cat verify-project.log
+
             exit "$STATUS"
           fi
 
-      # --------------------------------------------------
-      # 4. Mostrar información de targets
-      # --------------------------------------------------
-      - name: Show build settings
+      # ==============================================
+      # 6. Mostrar configuración del target
+      # ==============================================
+      - name: Show target settings
         shell: bash
         run: |
           set -euo pipefail
@@ -117,11 +223,12 @@ jobs:
             -target "$TARGET" \
             -configuration "$CONFIGURATION" \
             -sdk "$SDK" \
-            -showBuildSettings
+            -showBuildSettings \
+            2>&1 | tee build-settings.log
 
-      # --------------------------------------------------
-      # 5. Limpiar
-      # --------------------------------------------------
+      # ==============================================
+      # 7. Limpiar proyecto
+      # ==============================================
       - name: Clean
         shell: bash
         run: |
@@ -136,9 +243,9 @@ jobs:
             -sdk "$SDK" \
             clean
 
-      # --------------------------------------------------
-      # 6. Compilar / Archive
-      # --------------------------------------------------
+      # ==============================================
+      # 8. Crear Archive
+      # ==============================================
       - name: Archive
         shell: bash
         run: |
@@ -160,15 +267,15 @@ jobs:
             archive \
             2>&1 | tee build/build.log
 
-      # --------------------------------------------------
-      # 7. Buscar la aplicación compilada
-      # --------------------------------------------------
-      - name: Find archived app
+      # ==============================================
+      # 9. Encontrar .app
+      # ==============================================
+      - name: Find application
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Buscando .app..."
+          echo "Buscando aplicación compilada..."
 
           APP_PATH="$(
             find "$ARCHIVE_PATH/Products/Applications" \
@@ -180,23 +287,28 @@ jobs:
           )"
 
           if [[ -z "$APP_PATH" ]]; then
+
             echo "::error::No se encontró ninguna aplicación .app."
 
             echo
             echo "Contenido del archive:"
-            find "$ARCHIVE_PATH" -maxdepth 6 -print || true
+
+            find "$ARCHIVE_PATH" \
+              -maxdepth 6 \
+              -print || true
 
             exit 1
           fi
 
+          echo
           echo "Aplicación encontrada:"
           echo "$APP_PATH"
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
-      # 8. Crear IPA unsigned
-      # --------------------------------------------------
+      # ==============================================
+      # 10. Crear IPA
+      # ==============================================
       - name: Create unsigned IPA
         shell: bash
         run: |
@@ -217,17 +329,17 @@ jobs:
             Payload
 
           echo
-          echo "========================================"
+          echo "=========================================="
           echo "IPA CREADA"
-          echo "========================================"
+          echo "=========================================="
 
           ls -lh 3105-unsigned.ipa
 
-          /usr/bin/file 3105-unsigned.ipa
+          file 3105-unsigned.ipa
 
-      # --------------------------------------------------
-      # 9. Subir IPA
-      # --------------------------------------------------
+      # ==============================================
+      # 11. Subir IPA
+      # ==============================================
       - name: Upload IPA
         if: success()
         uses: actions/upload-artifact@v4
@@ -237,9 +349,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # --------------------------------------------------
-      # 10. Subir logs para diagnosticar errores
-      # --------------------------------------------------
+      # ==============================================
+      # 12. Subir logs
+      # ==============================================
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -247,6 +359,7 @@ jobs:
           name: 3105-build-diagnostics
           path: |
             verify-project.log
+            build-settings.log
             build/build.log
             build/3105.xcarchive
           if-no-files-found: warn
