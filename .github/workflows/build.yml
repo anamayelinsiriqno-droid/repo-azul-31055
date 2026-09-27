@@ -9,22 +9,26 @@ jobs:
       - name: Descomprimir
         run: |
           ZIP=$(ls *.zip | head -n 1)
+          echo "Zip: $ZIP"
           unzip -o "$ZIP"
           ls -lh
-          ls -d *.xcodeproj */*.xcodeproj 2>/dev/null
 
       - name: Build
         run: |
-          PROJ=$(ls -d *.xcodeproj */*.xcodeproj 2>/dev/null | head -n 1)
-          echo "Proyecto: $PROJ"
+          PROJ=$(ls -d *.xcodeproj 2>/dev/null | head -n 1)
+          if [ -z "$PROJ" ]; then
+            PROJ=$(ls -d */*.xcodeproj 2>/dev/null | head -n 1)
+          fi
+          echo "Compilando: $PROJ"
 
-          # Parche a iOS 17
-          sed -i '' 's/16.0/17.0/g' "$PROJ/project.pbxproj" 2>/dev/null || sed -i 's/16.0/17.0/g' "$PROJ/project.pbxproj"
+          # parche a iOS 17
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 16.0/IPHONEOS_DEPLOYMENT_TARGET = 17.0/g' "$PROJ/project.pbxproj" 2>/dev/null || true
+          sed -i '' 's/16.0/17.0/g' "$PROJ/project.pbxproj" 2>/dev/null || true
 
           xcodebuild -project "$PROJ" -scheme 3105 -sdk iphoneos -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES SYMROOT=$(pwd)/build build
 
           mkdir -p Payload
-          APP=$(ls -d build/Release-iphoneos/*.app | head -n 1)
+          APP=$(ls -d build/Release-iphoneos/*.app 2>/dev/null | head -n 1)
           cp -R "$APP" Payload/
           zip -r azul.ipa Payload
 
