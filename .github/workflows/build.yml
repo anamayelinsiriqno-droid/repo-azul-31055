@@ -1,209 +1,196 @@
-ersion
-          xcode-select -p
-          swift --version
+name: Slowth - Build IPA
 
-      - name: Install CocoaPods dependencies if needed
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 15
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          if [ -f "Podfile" ]; then
-            sudo gem install cocoapods --no-document
-            pod install --repo-update
+          XCODE=""
+          for APP in /Applications/Xcode_15*.app /Applications/Xcode.app; do
+            if [ -d "$APP" ]; then
+              VERSION="$("$APP/Contents/Developer/usr/bin/xcodebuild" -version 2>/dev/null | head -n 1 || true)"
+              case "$VERSION" in
+                Xcode\ 15.*)
+                  XCODE="$APP"
+                  ;;
+              esac
+            fi
+          done
+
+          if [ -z "$XCODE" ]; then
+            echo "::error::Xcode 15 was not found on the GitHub runner."
+            echo "Available Xcodes:"
+            find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print
+            exit 1
           fi
 
+          echo "Using $XCODE"
+          sudo xcode-select --switch "$XCODE/Contents/Developer"
+          sudo xcodebuild -license accept
+
+          xcodebuild -version
+          xcode-select -p
+
       - name: Find Xcode project
-        id: find_project
+        id: project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          WORKSPACE="$(find . -maxdepth 4 -type d -name '*.xcworkspace' \
-            ! -path '*/Pods/*' | sort | head -n 1 || true)"
+          WORKSPACE=$(find . -type d -name "*.xcworkspace" \
+            -not -path "./Pods/*" \
+            -not -path "./Carthage/*" | head -n 1 || true)
 
-          PROJECT="$(find . -maxdepth 4 -type d -name '*.xcodeproj' \
-            ! -path '*/Pods/*' | sort | head -n 1 || true)"
+          PROJECT=$(find . -type d -name "*.xcodeproj" \
+            -not -path "./Pods/*" \
+            -not -path "./Carthage/*" | head -n 1 || true)
 
           if [ -n "$WORKSPACE" ]; then
             echo "type=workspace" >> "$GITHUB_OUTPUT"
             echo "path=$WORKSPACE" >> "$GITHUB_OUTPUT"
-            echo "Found workspace: $WORKSPACE"
+            echo "Project type: workspace"
+            echo "Project: $WORKSPACE"
           elif [ -n "$PROJECT" ]; then
             echo "type=project" >> "$GITHUB_OUTPUT"
             echo "path=$PROJECT" >> "$GITHUB_OUTPUT"
-            echo "Found project: $PROJECT"
+            echo "Project type: project"
+            echo "Project: $PROJECT"
           else
             echo "::error::No .xcodeproj or .xcworkspace was found."
-            echo "Put the complete Xcode source in the repository before running this workflow."
+            echo "Repository contents:"
+            find . -maxdepth 3 -type f | sort | head -n 300
             exit 1
           fi
 
-      - name: Find application scheme
-        id: find_scheme
+      - name: Install dependencies
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          TYPE="${{ steps.find_project.outputs.type }}"
-          PATH_TO_PROJECT="${{ steps.find_project.outputs.path }}"
+          if [ -f "Podfile" ]; then
+            sudo gem install cocoapods --no-document
+            pod install
+          fi
+
+      - name: Find scheme
+        id: scheme
+        shell: bash
+        run: |
+          set -e
+
+          TYPE="${{ steps.project.outputs.type }}"
+          PATH_NAME="${{ steps.project.outputs.path }}"
 
           if [ "$TYPE" = "workspace" ]; then
-            LIST="$(xcodebuild -workspace "$PATH_TO_PROJECT" -list)"
+            xcodebuild -workspace "$PATH_NAME" -list | tee xcode-list.txt
           else
-            LIST="$(xcodebuild -project "$PATH_TO_PROJECT" -list)"
+            xcodebuild -project "$PATH_NAME" -list | tee xcode-list.txt
           fi
 
-          echo "$LIST"
-
-          # Prefer a scheme containing Slowth or Filza.
-          SCHEME="$(printf '%s\n' "$LIST" |
-            sed -n '/Schemes:/,$p' |
-            sed '1d' |
-            sed 's/^[[:space:]]*//' |
-            grep -E -i '^(Slowth|Filza)' |
-            head -n 1 || true)"
-
-          # Otherwise use the first available scheme.
-          if [ -z "$SCHEME" ]; then
-            SCHEME="$(printf '%s\n' "$LIST" |
-              sed -n '/Schemes:/,$p' |
-              sed '1d' |
-              sed 's/^[[:space:]]*//' |
-              sed '/^$/d' |
-              head -n 1 || true)"
+          # Use SLOWTH_SCHEME if it was defined as a repository variable.
+          if [ -n "${SLOWTH_SCHEME:-}" ]; then
+            SCHEME="$SLOWTH_SCHEME"
+          else
+            SCHEME=$(
+              awk '
+                /^Schemes:/ { found=1; next }
+                found && /^[[:space:]]+[A-Za-z0-9_.-]+$/ {
+                  gsub(/^[[:space:]]+/, "", $0);
+                  print;
+                  exit
+                }
+              ' xcode-list.txt
+            )
           fi
 
           if [ -z "$SCHEME" ]; then
-            echo "::error::No Xcode scheme was found."
+            echo "::error::No shared Xcode scheme was found."
+            cat xcode-list.txt
             exit 1
           fi
 
           echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
           echo "Using scheme: $SCHEME"
 
-      - name: Resolve Swift packages
+      - name: Build
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          TYPE="${{ steps.find_project.outputs.type }}"
-          PATH_TO_PROJECT="${{ steps.find_project.outputs.path }}"
-          SCHEME="${{ steps.find_scheme.outputs.scheme }}"
+          TYPE="${{ steps.project.outputs.type }}"
+          PATH_NAME="${{ steps.project.outputs.path }}"
+          SCHEME="${{ steps.scheme.outputs.scheme }}"
 
-          if [ "$TYPE" = "workspace" ]; then
-            xcodebuild \
-              -workspace "$PATH_TO_PROJECT" \
-              -scheme "$SCHEME" \
-              -resolvePackageDependencies
-          else
-            xcodebuild \
-              -project "$PATH_TO_PROJECT" \
-              -scheme "$SCHEME" \
-              -resolvePackageDependencies
-          fi
+          rm -rf build
 
-      - name: Build unsigned iOS app
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TYPE="${{ steps.find_project.outputs.type }}"
-          PATH_TO_PROJECT="${{ steps.find_project.outputs.path }}"
-          SCHEME="${{ steps.find_scheme.outputs.scheme }}"
-
-          rm -rf "$GITHUB_WORKSPACE/build"
-
-          COMMON_ARGS=(
+          ARGS=(
             -scheme "$SCHEME"
-            -configuration "$CONFIGURATION"
+            -configuration Release
             -sdk iphoneos
             -destination "generic/platform=iOS"
             -derivedDataPath "$GITHUB_WORKSPACE/build/DerivedData"
-
-            # Keep the app unsigned so it can be signed separately for the
-            # user's jailbreak/install workflow.
             CODE_SIGNING_ALLOWED=NO
             CODE_SIGNING_REQUIRED=NO
             CODE_SIGN_IDENTITY=""
-
-            # Enforce the requested minimum OS at build time.
-            IPHONEOS_DEPLOYMENT_TARGET="$IPHONEOS_DEPLOYMENT_TARGET"
           )
 
           if [ "$TYPE" = "workspace" ]; then
             xcodebuild \
-              -workspace "$PATH_TO_PROJECT" \
-              "${COMMON_ARGS[@]}" \
+              -workspace "$PATH_NAME" \
+              "${ARGS[@]}" \
               clean build
           else
             xcodebuild \
-              -project "$PATH_TO_PROJECT" \
-              "${COMMON_ARGS[@]}" \
+              -project "$PATH_NAME" \
+              "${ARGS[@]}" \
               clean build
           fi
 
-      - name: Locate built .app
-        id: find_app
+      - name: Create IPA
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          APP="$(find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products" \
-            -type d \
-            -path '*Release-iphoneos/*.app' \
-            ! -path '*/Index.noindex/*' |
-            sort |
-            head -n 1 || true)"
+          APP=$(find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products" \
+            -type d -name "*.app" \
+            -path "*Release-iphoneos/*" \
+            -not -path "*/Index.noindex/*" |
+            head -n 1)
 
           if [ -z "$APP" ]; then
-            echo "::error::xcodebuild finished without producing an iOS .app."
-            find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products" -maxdepth 3 -print || true
+            echo "::error::The build did not produce an .app"
+            find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products" -maxdepth 4 -print || true
             exit 1
           fi
 
-          echo "app=$APP" >> "$GITHUB_OUTPUT"
-          echo "Built app: $APP"
+          echo "APP=$APP"
 
-      - name: Verify deployment target
-        shell: bash
-        run: |
-          set -euo pipefail
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
 
-          APP="${{ steps.find_app.outputs.app }}"
-
-          if [ ! -f "$APP/Info.plist" ]; then
-            echo "::error::Built app has no Info.plist."
-            exit 1
-          fi
-
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" || true
-          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP/Info.plist" || true
-
-      - name: Create unsigned IPA
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP="${{ steps.find_app.outputs.app }}"
-
-          rm -rf "$GITHUB_WORKSPACE/build/Payload"
-          mkdir -p "$GITHUB_WORKSPACE/build/Payload"
-
-          cp -R "$APP" "$GITHUB_WORKSPACE/build/Payload/"
-
-          cd "$GITHUB_WORKSPACE/build"
-          rm -f Slowth-DarkFantasy.ipa
-
-          /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
-            Payload Slowth-DarkFantasy.ipa
-
-          test -s Slowth-DarkFantasy.ipa
+          cd build
+          /usr/bin/zip -qry Slowth-DarkFantasy.ipa Payload
+          test -f Slowth-DarkFantasy.ipa
           ls -lh Slowth-DarkFantasy.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Slowth-DarkFantasy-IPA
+          name: Slowth-DarkFantasy
           path: build/Slowth-DarkFantasy.ipa
           if-no-files-found: error
           retention-days: 30
