@@ -1,198 +1,209 @@
-from pathlib import Path
+ersion
+          xcode-select -p
+          swift --version
 
-workflow = r'''name: Build Slowth Dark Fantasy IPA
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-jobs:
-  build:
-    # Xcode 15 / macOS 14 runner. The app's deployment target should remain iOS 12.0.
-    runs-on: macos-14
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Select Xcode 15
+      - name: Install CocoaPods dependencies if needed
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "Installed Xcodes:"
-          ls -1 /Applications | grep '^Xcode' || true
-
-          # Prefer Xcode 15.4, then any Xcode 15.x available on the runner.
-          if [ -d "/Applications/Xcode_15.4.app" ]; then
-            sudo xcode-select -s "/Applications/Xcode_15.4.app/Contents/Developer"
-          else
-            XCODE15="$(find /Applications -maxdepth 1 -type d -name 'Xcode_15*.app' | sort -V | tail -n 1)"
-            if [ -z "$XCODE15" ]; then
-              echo "ERROR: No Xcode 15 installation was found on this runner."
-              exit 1
-            fi
-            sudo xcode-select -s "$XCODE15/Contents/Developer"
+          if [ -f "Podfile" ]; then
+            sudo gem install cocoapods --no-document
+            pod install --repo-update
           fi
 
-          xcodebuild -version
-          xcodebuild -showsdks | grep -E 'iphoneos|iphonesimulator'
-
-      - name: Find Xcode project or workspace
-        id: project
+      - name: Find Xcode project
+        id: find_project
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          PROJECT="$(find . -maxdepth 4 -name '*.xcodeproj' -print -quit)"
-          WORKSPACE="$(find . -maxdepth 4 -name '*.xcworkspace' -print -quit)"
+          WORKSPACE="$(find . -maxdepth 4 -type d -name '*.xcworkspace' \
+            ! -path '*/Pods/*' | sort | head -n 1 || true)"
+
+          PROJECT="$(find . -maxdepth 4 -type d -name '*.xcodeproj' \
+            ! -path '*/Pods/*' | sort | head -n 1 || true)"
 
           if [ -n "$WORKSPACE" ]; then
-            echo "kind=workspace" >> "$GITHUB_OUTPUT"
+            echo "type=workspace" >> "$GITHUB_OUTPUT"
             echo "path=$WORKSPACE" >> "$GITHUB_OUTPUT"
-            echo "build_path=$WORKSPACE" >> "$GITHUB_OUTPUT"
+            echo "Found workspace: $WORKSPACE"
           elif [ -n "$PROJECT" ]; then
-            echo "kind=project" >> "$GITHUB_OUTPUT"
+            echo "type=project" >> "$GITHUB_OUTPUT"
             echo "path=$PROJECT" >> "$GITHUB_OUTPUT"
-            echo "build_path=$PROJECT" >> "$GITHUB_OUTPUT"
+            echo "Found project: $PROJECT"
           else
-            echo "ERROR: No .xcodeproj or .xcworkspace was found."
-            echo "The Slowth Dark Fantasy UI patch contains Swift/resources only;"
-            echo "it must be copied into the complete Xcode source project first."
+            echo "::error::No .xcodeproj or .xcworkspace was found."
+            echo "Put the complete Xcode source in the repository before running this workflow."
             exit 1
           fi
 
-          echo "Using: ${WORKSPACE:-$PROJECT}"
-
-      - name: List schemes
+      - name: Find application scheme
+        id: find_scheme
         shell: bash
         run: |
-          set -e
-          if [ "${{ steps.project.outputs.kind }}" = "workspace" ]; then
-            xcodebuild -workspace "${{ steps.project.outputs.path }}" -list
+          set -euo pipefail
+
+          TYPE="${{ steps.find_project.outputs.type }}"
+          PATH_TO_PROJECT="${{ steps.find_project.outputs.path }}"
+
+          if [ "$TYPE" = "workspace" ]; then
+            LIST="$(xcodebuild -workspace "$PATH_TO_PROJECT" -list)"
           else
-            xcodebuild -project "${{ steps.project.outputs.path }}" -list
+            LIST="$(xcodebuild -project "$PATH_TO_PROJECT" -list)"
           fi
 
-      - name: Select app scheme
-        id: scheme
-        shell: bash
-        run: |
-          set -e
+          echo "$LIST"
 
-          if [ -n "${SLOWTH_SCHEME:-}" ]; then
-            echo "name=$SLOWTH_SCHEME" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # Prefer a scheme containing Slowth or Filza.
+          SCHEME="$(printf '%s\n' "$LIST" |
+            sed -n '/Schemes:/,$p' |
+            sed '1d' |
+            sed 's/^[[:space:]]*//' |
+            grep -E -i '^(Slowth|Filza)' |
+            head -n 1 || true)"
 
-          if [ "${{ steps.project.outputs.kind }}" = "workspace" ]; then
-            SCHEME="$(xcodebuild -workspace "${{ steps.project.outputs.path }}" -list |
-              awk '/Schemes:/{flag=1;next} flag && NF{gsub(/^[ \t]+|[ \t]+$/, ""); print; exit}')"
-          else
-            SCHEME="$(xcodebuild -project "${{ steps.project.outputs.path }}" -list |
-              awk '/Schemes:/{flag=1;next} flag && NF{gsub(/^[ \t]+|[ \t]+$/, ""); print; exit}')"
+          # Otherwise use the first available scheme.
+          if [ -z "$SCHEME" ]; then
+            SCHEME="$(printf '%s\n' "$LIST" |
+              sed -n '/Schemes:/,$p' |
+              sed '1d' |
+              sed 's/^[[:space:]]*//' |
+              sed '/^$/d' |
+              head -n 1 || true)"
           fi
 
           if [ -z "$SCHEME" ]; then
-            echo "ERROR: Could not determine an Xcode scheme."
-            echo "Set the repository variable SLOWTH_SCHEME to the exact scheme name."
+            echo "::error::No Xcode scheme was found."
             exit 1
           fi
 
-          echo "Detected scheme: $SCHEME"
-          echo "name=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "Using scheme: $SCHEME"
 
-      - name: Check deployment target
+      - name: Resolve Swift packages
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          if [ "${{ steps.project.outputs.kind }}" = "workspace" ]; then
+          TYPE="${{ steps.find_project.outputs.type }}"
+          PATH_TO_PROJECT="${{ steps.find_project.outputs.path }}"
+          SCHEME="${{ steps.find_scheme.outputs.scheme }}"
+
+          if [ "$TYPE" = "workspace" ]; then
             xcodebuild \
-              -workspace "${{ steps.project.outputs.path }}" \
-              -scheme "${{ steps.scheme.outputs.name }}" \
-              -showBuildSettings > build-settings.txt
+              -workspace "$PATH_TO_PROJECT" \
+              -scheme "$SCHEME" \
+              -resolvePackageDependencies
           else
             xcodebuild \
-              -project "${{ steps.project.outputs.path }}" \
-              -scheme "${{ steps.scheme.outputs.name }}" \
-              -showBuildSettings > build-settings.txt
+              -project "$PATH_TO_PROJECT" \
+              -scheme "$SCHEME" \
+              -resolvePackageDependencies
           fi
 
-          echo "Deployment target(s):"
-          grep -E 'IPHONEOS_DEPLOYMENT_TARGET' build-settings.txt || true
-
-          # The source should target iOS 12.0. A newer SDK may be used to build;
-          # the deployment target is what controls device compatibility.
-          if grep -q 'IPHONEOS_DEPLOYMENT_TARGET = 1[3-9]' build-settings.txt; then
-            echo "ERROR: Deployment target is above iOS 12."
-            exit 1
-          fi
-
-      - name: Build unsigned Release app
+      - name: Build unsigned iOS app
         shell: bash
         run: |
-          set -e
-          rm -rf build
+          set -euo pipefail
+
+          TYPE="${{ steps.find_project.outputs.type }}"
+          PATH_TO_PROJECT="${{ steps.find_project.outputs.path }}"
+          SCHEME="${{ steps.find_scheme.outputs.scheme }}"
+
+          rm -rf "$GITHUB_WORKSPACE/build"
 
           COMMON_ARGS=(
-            -scheme "${{ steps.scheme.outputs.name }}"
-            -configuration Release
+            -scheme "$SCHEME"
+            -configuration "$CONFIGURATION"
             -sdk iphoneos
-            -destination 'generic/platform=iOS'
-            -derivedDataPath "$PWD/build/DerivedData"
+            -destination "generic/platform=iOS"
+            -derivedDataPath "$GITHUB_WORKSPACE/build/DerivedData"
+
+            # Keep the app unsigned so it can be signed separately for the
+            # user's jailbreak/install workflow.
             CODE_SIGNING_ALLOWED=NO
             CODE_SIGNING_REQUIRED=NO
             CODE_SIGN_IDENTITY=""
+
+            # Enforce the requested minimum OS at build time.
+            IPHONEOS_DEPLOYMENT_TARGET="$IPHONEOS_DEPLOYMENT_TARGET"
           )
 
-          if [ "${{ steps.project.outputs.kind }}" = "workspace" ]; then
+          if [ "$TYPE" = "workspace" ]; then
             xcodebuild \
-              -workspace "${{ steps.project.outputs.path }}" \
+              -workspace "$PATH_TO_PROJECT" \
               "${COMMON_ARGS[@]}" \
               clean build
           else
             xcodebuild \
-              -project "${{ steps.project.outputs.path }}" \
+              -project "$PATH_TO_PROJECT" \
               "${COMMON_ARGS[@]}" \
               clean build
           fi
 
-      - name: Package unsigned IPA
+      - name: Locate built .app
+        id: find_app
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          APP_PATH="$(find "$PWD/build/DerivedData/Build/Products/Release-iphoneos" \
-            -maxdepth 1 -name '*.app' -type d -print -quit)"
+          APP="$(find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products" \
+            -type d \
+            -path '*Release-iphoneos/*.app' \
+            ! -path '*/Index.noindex/*' |
+            sort |
+            head -n 1 || true)"
 
-          if [ -z "$APP_PATH" ]; then
-            echo "ERROR: No .app was produced."
+          if [ -z "$APP" ]; then
+            echo "::error::xcodebuild finished without producing an iOS .app."
+            find "$GITHUB_WORKSPACE/build/DerivedData/Build/Products" -maxdepth 3 -print || true
             exit 1
           fi
 
-          rm -rf build/Payload
-          mkdir -p build/Payload
-          cp -R "$APP_PATH" build/Payload/
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "Built app: $APP"
 
-          # IPA is simply a ZIP containing Payload/*.app.
-          cd build
-          /usr/bin/zip -qry "Slowth-DarkFantasy-unsigned.ipa" Payload
+      - name: Verify deployment target
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          echo "Created:"
-          ls -lh "Slowth-DarkFantasy-unsigned.ipa"
+          APP="${{ steps.find_app.outputs.app }}"
+
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "::error::Built app has no Info.plist."
+            exit 1
+          fi
+
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP/Info.plist" || true
+
+      - name: Create unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="${{ steps.find_app.outputs.app }}"
+
+          rm -rf "$GITHUB_WORKSPACE/build/Payload"
+          mkdir -p "$GITHUB_WORKSPACE/build/Payload"
+
+          cp -R "$APP" "$GITHUB_WORKSPACE/build/Payload/"
+
+          cd "$GITHUB_WORKSPACE/build"
+          rm -f Slowth-DarkFantasy.ipa
+
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+            Payload Slowth-DarkFantasy.ipa
+
+          test -s Slowth-DarkFantasy.ipa
+          ls -lh Slowth-DarkFantasy.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: Slowth-DarkFantasy-IPA
-          path: build/Slowth-DarkFantasy-unsigned.ipa
+          path: build/Slowth-DarkFantasy.ipa
           if-no-files-found: error
           retention-days: 30
-'''
-
-out = Path("/mnt/data/build-slowth.yml")
-out.write_text(workflow, encoding="utf-8")
-print(out)
